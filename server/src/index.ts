@@ -85,19 +85,27 @@ app.post(
 );
 
 // Test endpoint to manually add a pending transaction
-app.post("/test/add-transaction", (req: Request, res: Response) => {
-  const { hash, status = "pending" } = req.body;
-  if (!hash) {
-    return res.status(400).json({ error: "Transaction hash is required" });
+app.post("/test/add-transaction", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { hash, status = "pending" } = req.body;
+    if (!hash) {
+      return res.status(400).json({ error: "Transaction hash is required" });
+    }
+    await transactionStore.addTransaction(hash, status);
+    res.json({ message: `Transaction ${hash} added with status ${status}` });
+  } catch (err) {
+    next(err);
   }
-  transactionStore.addTransaction(hash, status);
-  res.json({ message: `Transaction ${hash} added with status ${status}` });
 });
 
 // Test endpoint to view all transactions
-app.get("/test/transactions", (req: Request, res: Response) => {
-  const transactions = transactionStore.getAllTransactions();
-  res.json({ transactions });
+app.get("/test/transactions", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const transactions = await transactionStore.getAllTransactions();
+    res.json({ transactions });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // 404 - must come after all routes

@@ -12,6 +12,9 @@ export interface Config {
   feeMultiplier: number;
   networkPassphrase: string;
   horizonUrl?: string;
+  rateLimitWindowMs: number;
+  rateLimitMax: number;
+  allowedOrigins: string[];
 }
 
 export function loadConfig(): Config {
@@ -41,6 +44,15 @@ export function loadConfig(): Config {
     process.env.STELLAR_NETWORK_PASSPHRASE ||
     "Test SDF Network ; September 2015";
   const horizonUrl = process.env.STELLAR_HORIZON_URL;
+  const rateLimitWindowMs = parseInt(
+    process.env.RATE_LIMIT_WINDOW_MS || "60000",
+    10
+  );
+  const rateLimitMax = parseInt(process.env.RATE_LIMIT_MAX || "100", 10);
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
 
   return {
     feePayerAccounts,
@@ -48,6 +60,9 @@ export function loadConfig(): Config {
     feeMultiplier,
     networkPassphrase,
     horizonUrl,
+    rateLimitWindowMs,
+    rateLimitMax,
+    allowedOrigins,
   };
 }
 

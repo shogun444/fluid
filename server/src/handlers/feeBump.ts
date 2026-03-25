@@ -1,20 +1,14 @@
 import { Request, Response, NextFunction } from "express";
 import StellarSdk from "@stellar/stellar-sdk";
-import { Config } from "../config";
-import { FeeBumpSchema, FeeBumpRequest } from "../schemas/feeBump";
+import { Config, pickFeePayerAccount } from "../config";
+import { FeeBumpSchema } from "../schemas/feeBump";
 import { ApiKeyConfig } from "../middleware/apiKeys";
 import { syncTenantFromApiKey } from "../models/tenantStore";
 import { recordSponsoredTransaction } from "../models/transactionLedger";
 import { checkTenantDailyQuota } from "../services/quota";
 import { transactionStore } from "../workers/transactionStore";
 import { AppError } from "../errors/AppError";
-
 import { calculateFeeBumpFee } from "../utils/feeCalculator";
-interface FeeBumpRequest {
-  xdr: string;
-  submit?: boolean;
-  token?: string;
-}
 
 interface FeeBumpResponse {
   xdr: string;
@@ -26,17 +20,13 @@ interface FeeBumpResponse {
 export async function feeBumpHandler(
   req: Request,
   res: Response,
-  next: NextFunction,
-  config: Config
+  config: Config,
+  next: NextFunction
 ): Promise<void> {
   try {
     const result = FeeBumpSchema.safeParse(req.body);
 
     if (!result.success) {
-      console.warn(
-        "Validation failed for fee-bump request:",
-        result.error.format()
-      );
       return next(
         new AppError(
           `Validation failed: ${JSON.stringify(result.error.format())}`,
@@ -44,27 +34,21 @@ export async function feeBumpHandler(
           "INVALID_XDR"
         )
       );
-      
-      const body: FeeBumpRequest = req.body;
-      if (!body.xdr) {
-        res.status(400).json({ error: "Missing 'xdr' field in request body" });
-        return;
-      }
     }
+
+    const { xdr, submit } = result.data;
 
     // Pick a fee payer account using Round Robin
     const feePayerAccount = pickFeePayerAccount(config);
     console.log(`Received fee-bump request | fee_payer: ${feePayerAccount.publicKey}`);
 
     let innerTransaction: any;
-
     try {
       innerTransaction = StellarSdk.TransactionBuilder.fromXDR(
-        body.xdr,
-        config.networkPassphrase,
+        xdr,
+        config.networkPassphrase
       );
     } catch (error: any) {
-      console.error("Failed to parse XDR:", error.message);
       return next(
         new AppError(`Invalid XDR: ${error.message}`, 400, "INVALID_XDR")
       );
@@ -90,36 +74,19 @@ export async function feeBumpHandler(
       );
     }
 
-    const feeAmount = Math.floor(config.baseFee * config.feeMultiplier);
     const apiKeyConfig = res.locals.apiKey as ApiKeyConfig | undefined;
-
     if (!apiKeyConfig) {
-      res.status(500).json({
-        error: "Missing tenant context for fee sponsorship",
-      });
+      res.status(500).json({ error: "Missing tenant context for fee sponsorship" });
       return;
     }
 
     const tenant = syncTenantFromApiKey(apiKeyConfig);
-    const quotaCheck = checkTenantDailyQuota(tenant, feeAmount);
 
-    if (!quotaCheck.allowed) {
-      res.status(403).json({
-        error: "Daily fee sponsorship quota exceeded",
-        currentSpendStroops: quotaCheck.currentSpendStroops,
-        attemptedFeeStroops: feeAmount,
-        dailyQuotaStroops: quotaCheck.dailyQuotaStroops,
-      });
-      return;
-    }
-    // Extract operation count safely
-    const operationCount = innerTransaction.operations?.length || 0;
-
-    // Use extracted utility for correct fee calculation
+    const operationCount = innerTransaction.operations?.length ?? 0;
     const feeAmount = calculateFeeBumpFee(
       operationCount,
       config.baseFee,
-      config.feeMultiplier,
+      config.feeMultiplier
     );
 
     console.log("Fee calculation:", {
@@ -129,61 +96,60 @@ export async function feeBumpHandler(
       finalFee: feeAmount,
     });
 
-    const feePayerKeypair = StellarSdk.Keypair.fromSecret(
-      config.feePayerSecret,
-    );
+    const quotaCheck = await checkTenantDailyQuota(tenant, feeAmount);
+    if (!quotaCheck.allowed) {
+      res.status(403).json({
+        error: "Daily fee sponsorship quota exceeded",
+        currentSpendStroops: quotaCheck.currentSpendStroops,
+        attemptedFeeStroops: feeAmount,
+        dailyQuotaStroops: quotaCheck.dailyQuotaStroops,
+      });
+      return;
+    }
 
     const feeBumpTx = StellarSdk.TransactionBuilder.buildFeeBumpTransaction(
       feePayerAccount.keypair,
       feeAmount,
       innerTransaction,
-      config.networkPassphrase,
+      config.networkPassphrase
     );
 
-    feeBumpTx.sign(feePayerKeypair);
-    recordSponsoredTransaction(tenant.id, feeAmount);
+    feeBumpTx.sign(feePayerAccount.keypair);
+    await recordSponsoredTransaction(tenant.id, feeAmount);
 
     const feeBumpXdr = feeBumpTx.toXDR();
+    const txHash = feeBumpTx.hash().toString("hex");
     console.log(`Fee-bump transaction created | fee_payer: ${feePayerAccount.publicKey}`);
-
-    const submit = body.submit || false;
-    const status = submit ? "submitted" : "ready";
 
     if (submit && config.horizonUrl) {
       const server = new StellarSdk.Horizon.Server(config.horizonUrl);
+      try {
+        const submitResult: any = await server.submitTransaction(feeBumpTx);
+        await transactionStore.addTransaction(submitResult.hash, "submitted");
 
-      server
-        .submitTransaction(feeBumpTx)
-        .then((result: any) => {
-          // Track the submitted transaction
-          transactionStore.addTransaction(result.hash, "submitted");
-
-          const response: FeeBumpResponse = {
-            xdr: feeBumpXdr,
-            status: "submitted",
-            hash: result.hash,
-            fee_payer: feePayerAccount.publicKey,
-          };
-          res.json(response);
-        })
-        .catch((error: any) => {
-          console.error("Transaction submission failed:", error);
-          next(
-            new AppError(
-              `Transaction submission failed: ${error.message}`,
-              500,
-              "SUBMISSION_FAILED"
-            )
-          );
-        });
+        const response: FeeBumpResponse = {
+          xdr: feeBumpXdr,
+          status: "submitted",
+          hash: submitResult.hash,
+          fee_payer: feePayerAccount.publicKey,
+        };
+        res.json(response);
+      } catch (error: any) {
+        return next(
+          new AppError(
+            `Transaction submission failed: ${error.message}`,
+            500,
+            "SUBMISSION_FAILED"
+          )
+        );
       }
     } else {
       const response: FeeBumpResponse = {
         xdr: feeBumpXdr,
-        status,
+        status: "ready",
+        hash: txHash,
         fee_payer: feePayerAccount.publicKey,
       };
-
       res.json(response);
     }
   } catch (error: any) {

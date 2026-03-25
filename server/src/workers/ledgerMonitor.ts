@@ -41,7 +41,7 @@ export class LedgerMonitor {
     try {
       console.log("[LedgerMonitor] Checking pending transactions...");
 
-      const pendingTransactions = transactionStore.getPendingTransactions();
+      const pendingTransactions = await transactionStore.getPendingTransactions();
 
       if (pendingTransactions.length === 0) {
         console.log("[LedgerMonitor] No pending transactions to check");
@@ -89,12 +89,12 @@ export class LedgerMonitor {
         console.log(
           `[LedgerMonitor] Transaction ${transaction.hash} was SUCCESSFUL`,
         );
-        transactionStore.updateTransactionStatus(transaction.hash, "success");
+        await transactionStore.updateTransactionStatus(transaction.hash, "success");
       } else {
         console.log(
           `[LedgerMonitor] Transaction ${transaction.hash} was UNSUCCESSFUL`,
         );
-        transactionStore.updateTransactionStatus(transaction.hash, "failed");
+        await transactionStore.updateTransactionStatus(transaction.hash, "failed");
       }
     } catch (error: any) {
       // Handle 404 - transaction not found (might be dropped from mempool)
@@ -102,7 +102,7 @@ export class LedgerMonitor {
         console.log(
           `[LedgerMonitor] Transaction ${transaction.hash} not found on ledger (404) - marking as failed`,
         );
-        transactionStore.updateTransactionStatus(transaction.hash, "failed");
+        await transactionStore.updateTransactionStatus(transaction.hash, "failed");
       } else {
         console.error(
           `[LedgerMonitor] Error checking transaction ${transaction.hash}:`,
@@ -116,7 +116,7 @@ export class LedgerMonitor {
           console.log(
             `[LedgerMonitor] Test/invalid transaction ${transaction.hash} - marking as failed`,
           );
-          transactionStore.updateTransactionStatus(transaction.hash, "failed");
+          await transactionStore.updateTransactionStatus(transaction.hash, "failed");
         }
       }
     }

@@ -1,3 +1,5 @@
+import prisma from "../utils/db";
+
 export interface TransactionRecord {
   hash: string;
   status: 'pending' | 'submitted' | 'success' | 'failed';
@@ -5,46 +7,41 @@ export interface TransactionRecord {
   updatedAt: Date;
 }
 
-// Simple in-memory storage for transactions
-// In production, this should be replaced with a proper database
 class TransactionStore {
-  private transactions: Map<string, TransactionRecord> = new Map();
-
-  addTransaction(hash: string, status: 'pending' | 'submitted'): void {
-    const record: TransactionRecord = {
-      hash,
-      status,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.transactions.set(hash, record);
+  async addTransaction(hash: string, status: 'pending' | 'submitted'): Promise<void> {
+    await prisma.transaction.upsert({
+      where: { hash },
+      update: { status },
+      create: { hash, status },
+    });
     console.log(`[TransactionStore] Added transaction ${hash} with status ${status}`);
   }
 
-  updateTransactionStatus(hash: string, status: 'success' | 'failed'): void {
-    const record = this.transactions.get(hash);
-    if (record) {
-      record.status = status;
-      record.updatedAt = new Date();
+  async updateTransactionStatus(hash: string, status: 'success' | 'failed'): Promise<void> {
+    try {
+      await prisma.transaction.update({ where: { hash }, data: { status } });
       console.log(`[TransactionStore] Updated transaction ${hash} to status ${status}`);
-    } else {
+    } catch {
       console.log(`[TransactionStore] Transaction ${hash} not found for status update`);
     }
   }
 
-  getPendingTransactions(): TransactionRecord[] {
-    const pending = Array.from(this.transactions.values())
-      .filter(tx => tx.status === 'pending' || tx.status === 'submitted');
+  async getPendingTransactions(): Promise<TransactionRecord[]> {
+    const pending = await prisma.transaction.findMany({
+      where: { status: { in: ['pending', 'submitted'] } },
+    });
     console.log(`[TransactionStore] Found ${pending.length} pending/submitted transactions`);
-    return pending;
+    return pending as TransactionRecord[];
   }
 
-  getTransaction(hash: string): TransactionRecord | undefined {
-    return this.transactions.get(hash);
+  async getTransaction(hash: string): Promise<TransactionRecord | null> {
+    const record = await prisma.transaction.findUnique({ where: { hash } });
+    return record as TransactionRecord | null;
   }
 
-  getAllTransactions(): TransactionRecord[] {
-    return Array.from(this.transactions.values());
+  async getAllTransactions(): Promise<TransactionRecord[]> {
+    const records = await prisma.transaction.findMany();
+    return records as TransactionRecord[];
   }
 }
 
