@@ -91,3 +91,43 @@ fn parse_csv_env(key: &str) -> Option<Vec<String>> {
             .collect()
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_key(suffix: &str) -> String {
+        format!("FLUID_TEST_{suffix}_{}", uuid::Uuid::new_v4())
+    }
+
+    #[test]
+    fn parse_csv_env_splits_trims_and_filters() {
+        let key = unique_key("CSV");
+        std::env::set_var(&key, " a, ,b,  c  ,,");
+        let value = parse_csv_env(&key).unwrap();
+        assert_eq!(value, vec!["a", "b", "c"]);
+        std::env::remove_var(&key);
+    }
+
+    #[test]
+    fn env_parse_returns_default_on_missing_or_invalid() {
+        let missing = unique_key("MISSING");
+        let value: u32 = env_parse(&missing, 42);
+        assert_eq!(value, 42);
+
+        let invalid = unique_key("INVALID");
+        std::env::set_var(&invalid, "not-a-number");
+        let value: u32 = env_parse(&invalid, 7);
+        assert_eq!(value, 7);
+        std::env::remove_var(&invalid);
+    }
+
+    #[test]
+    fn load_config_errors_when_fee_payer_secret_missing() {
+        // Ensure the required secret isn't set for this test process.
+        std::env::remove_var("FLUID_FEE_PAYER_SECRET");
+        let err = load_config().expect_err("expected missing secret to error");
+        assert_eq!(err.code, "INTERNAL_ERROR");
+        assert_eq!(err.status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+}
