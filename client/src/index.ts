@@ -1,15 +1,22 @@
 import StellarSdk from "@stellar/stellar-sdk";
 import dotenv from "dotenv";
+import {
+  createHorizonServer,
+  fromTransactionXdr,
+  resolveStellarSdk,
+  toTransactionXdr,
+} from "./stellarCompatibility";
 
 dotenv.config();
 
-interface FluidClientConfig {
+export interface FluidClientConfig {
   serverUrl: string;
   networkPassphrase: string;
   horizonUrl?: string;
+  stellarSdk?: unknown;
 }
 
-interface FeeBumpResponse {
+export interface FeeBumpResponse {
   xdr: string;
   status: string;
   hash?: string;
@@ -19,12 +26,14 @@ export class FluidClient {
   private serverUrl: string;
   private networkPassphrase: string;
   private horizonServer?: any;
+  private stellarSdk: unknown;
 
   constructor(config: FluidClientConfig) {
     this.serverUrl = config.serverUrl;
     this.networkPassphrase = config.networkPassphrase;
+    this.stellarSdk = resolveStellarSdk(config.stellarSdk ?? StellarSdk);
     if (config.horizonUrl) {
-      this.horizonServer = new StellarSdk.Horizon.Server(config.horizonUrl);
+      this.horizonServer = createHorizonServer(this.stellarSdk, config.horizonUrl);
     }
   }
 
@@ -63,10 +72,7 @@ export class FluidClient {
       throw new Error("Horizon URL not configured");
     }
 
-    const feeBumpTx = StellarSdk.TransactionBuilder.fromXDR(
-      feeBumpXdr,
-      this.networkPassphrase
-    );
+    const feeBumpTx = fromTransactionXdr(this.stellarSdk, feeBumpXdr, this.networkPassphrase);
 
     return await this.horizonServer.submitTransaction(feeBumpTx);
   }
@@ -76,10 +82,20 @@ export class FluidClient {
     transaction: any,
     submit: boolean = false
   ): Promise<FeeBumpResponse> {
-    const signedXdr = transaction.toXDR();
+    const signedXdr = toTransactionXdr(transaction);
     return await this.requestFeeBump(signedXdr, submit);
   }
 }
+
+export {
+  buildFeeBumpTransaction,
+  createHorizonServer,
+  fromTransactionXdr,
+  getSdkFamily,
+  isTransactionLike,
+  resolveStellarSdk,
+  toTransactionXdr,
+} from "./stellarCompatibility";
 
 // Example usage
 async function main() {
