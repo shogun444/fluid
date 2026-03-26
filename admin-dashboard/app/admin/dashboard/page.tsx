@@ -6,11 +6,14 @@ import {
 } from "@/components/dashboard/ResponsiveTables";
 import { getDashboardPageData } from "@/lib/dashboard-data";
 import { StatCard } from "@/components/dashboard/StatCard";
+import { UsageLeaderboard } from "@/components/dashboard/UsageLeaderboard";
+import { getTenantLeaderboard } from "@/lib/transaction-history";
 import { Coins, CheckCircle, Wallet, Zap, KeyRound } from "lucide-react";
 
 export default async function AdminDashboard() {
   const session = await auth();
   const { signers, transactions, source } = await getDashboardPageData();
+  const tenantUsage = await getTenantLeaderboard();
 
   return (
     <div className="min-h-screen bg-slate-100">
@@ -99,6 +102,7 @@ export default async function AdminDashboard() {
           </div>
           <TransactionsTable transactions={transactions} />
           <SignersTable signers={signers} />
+          <UsageLeaderboard rows={tenantUsage} />
         </section>
       </main>
     </div>
