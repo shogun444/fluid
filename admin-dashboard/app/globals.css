@@ -130,6 +130,32 @@
   --font-mono: var(--font-geist-mono);
 }
 
+:root {
+  --background: #ffffff;
+  --foreground: #000000;
+}
+
+.dark {
+  --background: #020617;
+  --foreground: #ffffff;
+}
+
+@layer base {
+
+  *,
+  ::after,
+  ::before,
+  ::placeholder {
+    border-color: var(--color-gray-200);
+  }
+
+  html {
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
 /* ─── Base styles ─────────────────────────────────────────────────────────── */
 
 @layer base {

@@ -10,23 +10,32 @@ datasource db {
 }
 
 model Tenant {
-  id        String    @id @default(uuid())
-  name      String
-  apiKeys   ApiKey[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id                 String            @id @default(uuid())
+  name               String
+  dailyQuotaStroops  BigInt            @default(1000000) // 0.1 XLM default
+  totalCredit        BigInt            @default(0) // Total purchased credit
+  webhookUrl         String?
+  apiKeys            ApiKey[]
+  webhookDeliveries  WebhookDelivery[]
+  quotaTopUps QuotaTopUp[]
+  payments           Payment[]
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
 }
 
 model ApiKey {
-  id        String   @id @default(uuid())
-  key       String   @unique
-  prefix    String
-  tenantId  String
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  webhooks  WebhookDelivery[]
+  id                String   @id @default(uuid())
+  key               String   @unique
+  prefix            String
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  active            Boolean  @default(true)
+  dailyQuotaStroops BigInt   @default(1000000) // 0.1 XLM default
+  maxRequests       Int      @default(5)
+  windowMs          Int      @default(60000)
+  tier              String   @default("free") // free or pro
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }
 
 model WebhookDelivery {
@@ -34,7 +43,7 @@ model WebhookDelivery {
   tenantId    String
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
   url         String
-  payload     Json
+  payload     String
   status      String   @default("pending") // pending, success, failed
   retryCount  Int      @default(0)
   lastError   String?
@@ -44,4 +53,47 @@ model WebhookDelivery {
 
   @@index([status])
   @@index([tenantId])
+}
+
+model QuotaTopUp {
+  id              String   @id @default(uuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  stripeSessionId String   @unique
+  amountCents     Int
+  quotaStroops    BigInt
+  status          String   @default("pending") // pending, fulfilled, failed
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+model SupportedAsset {
+  id         String   @id @default(uuid())
+  code       String
+  issuer     String?
+  minBalance String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([code, issuer])
+}
+
+model SponsoredTransaction {
+  id         String   @id @default(uuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  feeStroops BigInt
+  createdAt  DateTime @default(now())
+}
+model SignerSecret {
+  id                String   @id @default(uuid())
+  publicKey         String   @unique
+  encryptedSecret   String
+  initializationVec String
+  authTag           String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }

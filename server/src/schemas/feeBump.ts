@@ -1,9 +1,22 @@
 import { z } from "zod";
 
-export const FeeBumpSchema = z.object({
-  xdr: z.string().min(1, "xdr field is required and must be a non-empty string"),
+export const FeeBumpSchema = z
+  .object({
+    xdr: z
+      .string()
+      .min(1, "xdr field is required and must be a non-empty string"),
+    submit: z.boolean().optional(),
+    token: z.string().optional(),
+    maxSlippage: z.number().min(0).max(100).optional(),
+  })
+  .strict();
+
+export type FeeBumpRequest = z.infer<typeof FeeBumpSchema>;
+
+export const FeeBumpBatchSchema = z.object({
+  xdrs: z.array(z.string().min(1)).min(1, "xdrs field is required and must contain at least one string"),
   submit: z.boolean().optional(),
   token: z.string().optional(),
 }).strict();
 
-export type FeeBumpRequest = z.infer<typeof FeeBumpSchema>;
+export type FeeBumpBatchRequest = z.infer<typeof FeeBumpBatchSchema>;
