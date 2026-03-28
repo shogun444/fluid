@@ -87,3 +87,54 @@ export interface TransactionHistoryPageData {
   search: string;
   source: "live" | "sample";
 }
+
+export type WebhookDeliveryStatus = "success" | "failed" | "pending" | "retrying";
+
+export interface WebhookDeliveryLog {
+  id: string;
+  tenantId: string;
+  tenantName: string | null;
+  eventType: WebhookEventType;
+  webhookUrl: string;
+  status: WebhookDeliveryStatus;
+  attempts: number;
+  maxAttempts: number;
+  responseCode: number | null;
+  responseMessage: string | null;
+  payload: any;
+  createdAt: string;
+  updatedAt: string;
+  nextRetryAt: string | null;
+}
+
+export type WebhookDeliverySort =
+  | "time_desc"
+  | "time_asc"
+  | "status_asc"
+  | "status_desc"
+  | "attempts_desc"
+  | "attempts_asc";
+
+export interface WebhookDeliveryQuery {
+  page: number;
+  pageSize: number;
+  search: string;
+  sort: WebhookDeliverySort;
+  statusFilter: WebhookDeliveryStatus[];
+  eventTypeFilter: WebhookEventType[];
+  tenantFilter: string[];
+}
+
+export interface WebhookDeliveryPageData {
+  rows: WebhookDeliveryLog[];
+  page: number;
+  pageSize: number;
+  totalRows: number;
+  totalPages: number;
+  sort: WebhookDeliverySort;
+  search: string;
+  statusFilter: WebhookDeliveryStatus[];
+  eventTypeFilter: WebhookEventType[];
+  tenantFilter: string[];
+  source: "live" | "sample";
+}
