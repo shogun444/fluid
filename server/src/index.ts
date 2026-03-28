@@ -1,397 +1,110 @@
-import "dotenv/config";
+# Development-only fallback (explicit). In production use Vault settings below.
+FLUID_FEE_PAYER_SECRET=SBXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
-import cors from "cors";
-import express, { NextFunction, Request, Response } from "express";
-import rateLimit from "express-rate-limit";
-import { loadConfig } from "./config";
-import { AppError } from "./errors/AppError";
-import {
-  listApiKeysHandler,
-  revokeApiKeyHandler,
-  upsertApiKeyHandler,
-} from "./handlers/adminApiKeys";
-import {
-  sandboxResetHandler,
-  sandboxStatusHandler,
-  createSandboxApiKeyHandler,
-} from "./handlers/sandbox";
-import { sandboxRateLimit } from "./middleware/sandboxGuard";
-import { startSandboxAutoReset } from "./workers/sandboxAutoReset";
-import {
-  listSubscriptionTiersHandler,
-  updateTenantSubscriptionTierHandler,
-} from "./handlers/adminSubscriptionTiers";
-import {
-  addSignerHandler,
-  listSignersHandler,
-  removeSignerHandler,
-} from "./handlers/adminSigners";
-import { feeBumpBatchHandler, feeBumpHandler } from "./handlers/feeBump";
-import {
-  createCheckoutSessionHandler,
-  stripeWebhookHandler,
-} from "./handlers/stripe";
-import {
-  getHorizonFailoverClient,
-  initializeHorizonFailoverClient,
-} from "./horizon/failoverClient";
-import { apiKeyMiddleware } from "./middleware/apiKeys";
-import { globalErrorHandler, notFoundHandler } from "./middleware/errorHandler";
-import { apiKeyRateLimit } from "./middleware/rateLimit";
-import { tenantTierTxLimit } from "./middleware/txLimit";
-import { AlertService } from "./services/alertService";
-import {
-  hydratePersistedSigners,
-  listAdminSigners,
-} from "./services/signerRegistry";
-import { createLogger, serializeError } from "./utils/logger";
-import redisClient from "./utils/redis";
-import { RedisRateLimitStore } from "./utils/redisRateLimitStore";
-import { initializeBalanceMonitor } from "./workers/balanceMonitor";
-import {
-  getLedgerMonitor,
-  initializeLedgerMonitor,
-} from "./workers/ledgerMonitor";
-import { initializeIncidentMonitor } from "./workers/incidentMonitor";
-import { transactionStore } from "./workers/transactionStore";
-import { healthHandler } from "./handlers/health";
+# --- Vault (recommended for production) ---
+# VAULT_ADDR=http://127.0.0.1:8200
+# VAULT_TOKEN=root
+# Or AppRole:
+# VAULT_APPROLE_ROLE_ID=...
+# VAULT_APPROLE_SECRET_ID=...
+#
+# FLUID_VAULT_KV_MOUNT=secret
+# FLUID_VAULT_KV_VERSION=2
+# FLUID_FEE_PAYER_VAULT_SECRET_FIELD=secret
+#
+# # Comma-separated; must match counts 1:1
+# FLUID_FEE_PAYER_VAULT_SECRET_PATHS=fluid/fee-payers/payer-1
+# FLUID_FEE_PAYER_PUBLIC_KEYS=GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+FLUID_BASE_FEE=100
+FLUID_FEE_MULTIPLIER=2.0
+STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
+STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
+STELLAR_HORIZON_URLS=https://horizon-testnet.stellar.org,https://horizon-testnet.stellar.lobstr.co
+STELLAR_RPC_URL=https://soroban-testnet.stellar.org
+FLUID_HORIZON_SELECTION=priority
+PORT=3000
+FLUID_RATE_LIMIT_WINDOW_MS=60000
+FLUID_RATE_LIMIT_MAX=5
+FLUID_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
 
-dotenv.config();
+# Low balance alerting
+LOW_BALANCE_ALERT_XLM=50
+LOW_BALANCE_ALERT_CHECK_INTERVAL_MS=300000
+LOW_BALANCE_ALERT_COOLDOWN_MS=3600000
+FLUID_LOW_BALANCE_THRESHOLD_XLM=50
+FLUID_LOW_BALANCE_CHECK_INTERVAL_MS=300000
+FLUID_LOW_BALANCE_ALERT_COOLDOWN_MS=3600000
+FLUID_ALERT_DASHBOARD_URL=http://localhost:3000/admin/dashboard
+RESEND_API_KEY=
+RESEND_EMAIL_FROM=
+RESEND_EMAIL_TO=
+PAGERDUTY_ROUTING_KEY=
+PAGERDUTY_SERVICE_NAME=Fluid server
+PAGERDUTY_SOURCE=fluid-server
+PAGERDUTY_COMPONENT=fee-sponsorship
+DISCORD_WEBHOOK_URL=
+DISCORD_MILESTONE_THRESHOLDS=1000,10000,100000
+SLACK_WEBHOOK_URL=
+SLACK_ALERT_LOW_BALANCE_ENABLED=true
+SLACK_ALERT_5XX_ENABLED=true
+SLACK_ALERT_SERVER_LIFECYCLE_ENABLED=true
+SLACK_ALERT_FAILED_TRANSACTION_ENABLED=true
+# Backward-compatible alias for existing deployments:
+FLUID_ALERT_SLACK_WEBHOOK_URL=
+FLUID_ALERT_SMTP_HOST=
+FLUID_ALERT_SMTP_PORT=587
+FLUID_ALERT_SMTP_SECURE=false
+FLUID_ALERT_SMTP_USER=
+FLUID_ALERT_SMTP_PASS=
+FLUID_ALERT_EMAIL_FROM=
+FLUID_ALERT_EMAIL_TO=
 
-const app = express();
-app.use(express.json());
+# Firebase Cloud Messaging (FCM) push notifications
+# Obtain from your Firebase project → Project settings → Service accounts → Generate new private key
+FCM_PROJECT_ID=
+FCM_CLIENT_EMAIL=
+# Paste the private key exactly as it appears in the JSON file (newlines as \n)
+FCM_PRIVATE_KEY=
 
-const config = loadConfig();
-const slackNotifier = new SlackNotifier(loadSlackNotifierOptionsFromEnv());
-const pagerDutyNotifier = new PagerDutyNotifier();
-const fcmNotifier = initializeFcmNotifier();
-if (fcmNotifier.isConfigured()) {
-  logger.info("FCM push notifications enabled");
-} else {
-  logger.info(
-    "FCM push notifications disabled - FCM_PROJECT_ID/FCM_CLIENT_EMAIL/FCM_PRIVATE_KEY not set",
-  );
-}
-const alertService = new AlertService(config.alerting, slackNotifier, {
-  fcmNotifier,
-});
+# Stripe Configuration
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
 
-// Use Redis-backed store for global IP rate limiting. Falls back to memory store if Redis unavailable.
-const windowSeconds = Math.max(1, Math.ceil(config.rateLimitWindowMs / 1000));
-let limiterStore: any = undefined;
-try {
-  // Prefer a maintained adapter if available: rate-limit-redis
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const RateLimitRedis = require("rate-limit-redis");
-  const RedisStore = RateLimitRedis.default || RateLimitRedis;
-  // Many adapters accept `client` for an ioredis instance and `expiry` or `windowMs`.
-  limiterStore = new RedisStore({ client: redisClient, expiry: windowSeconds });
-} catch (err) {
-  // Fallback to the lightweight custom store we added earlier
-  try {
-    limiterStore = new RedisRateLimitStore(redisClient, windowSeconds);
-  } catch (innerErr) {
-    console.error("Failed to initialize Redis rate-limit store:", innerErr);
-  }
-}
+NODE_ENV=development
+LOG_LEVEL=debug
+# Optional in development. Keep false to preserve JSON logs.
+LOG_PRETTY=false
 
-const limiter = rateLimit({
-  windowMs: config.rateLimitWindowMs,
-  max: config.rateLimitMax,
-  message: {
-    error: "Too many requests from this IP, please try again later.",
-    code: "RATE_LIMITED",
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  store: limiterStore,
-});
+# Safety limits to prevent DoS attacks (optional, has sensible defaults)
+# Maximum XDR string length in characters (default: 10240 = 10KB)
+FLUID_MAX_XDR_SIZE=10240
+# Maximum number of operations per transaction (default: 100)
+FLUID_MAX_OPERATIONS=100
 
-const corsOptions = {
-  origin: (
-    origin: string | undefined,
-    callback: (err: Error | null, allow?: boolean) => void,
-  ) => {
-    if (!origin) {
-      callback(null, false);
-      return;
-    }
+# Database Configuration
+# Prisma supports the native connection string format for PostgreSQL, MySQL, SQLite, SQL Server, MongoDB and CockroachDB.
+DATABASE_URL="postgresql://johndoe:randompassword@localhost:5432/mydb?schema=public"
 
-    if (
-      config.allowedOrigins.length === 0 ||
-      config.allowedOrigins.includes(origin)
-    ) {
-      callback(null, true);
-      return;
-    }
+# Stripe Billing (for fiat quota top-ups)
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
 
-    callback(new Error("Origin not allowed by CORS"), false);
-  },
-  credentials: true,
-};
+# Self-service tenant registration
+# Base URL of the admin dashboard, used to construct the email verification link.
+# Example: https://dashboard.yourcompany.com
+REGISTRATION_VERIFY_BASE_URL=http://localhost:3001
+# URL shown in the welcome email after successful registration.
+# Defaults to NEXT_PUBLIC_DOCS_URL if not set.
+FLUID_DOCS_URL=https://docs.fluid.dev
+# FLUID_ADMIN_TOKEN is also required here — set it to a strong random string and
+# ensure the admin-dashboard sets FLUID_ADMIN_TOKEN to the same value.
+FLUID_ADMIN_TOKEN=
 
-app.use(cors(corsOptions));
-
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  if (err.message === "Origin not allowed by CORS") {
-    return next(new AppError("CORS not allowed", 403, "AUTH_FAILED"));
-  }
-  next(err);
-});
-
-app.get("/health", (req: Request, res: Response) => {
-  const accounts = config.signerPool.getSnapshot().map((account) => ({
-    publicKey: account.publicKey,
-    status: account.active ? "active" : "inactive",
-    in_flight: account.inFlight,
-    total_uses: account.totalUses,
-    sequence_number: account.sequenceNumber,
-    balance: account.balance,
-  }));
-
-  res.json({
-    status: "ok",
-    fee_payers: accounts,
-    horizon_nodes:
-      getHorizonFailoverClient()?.getNodeStatuses() ??
-      getLedgerMonitor()?.getNodeStatuses() ??
-      config.horizonUrls.map((url) => ({
-        url,
-        state: "Active",
-        consecutiveFailures: 0,
-      })),
-    total: accounts.length,
-    low_balance_alerting: {
-      enabled:
-        config.alerting.lowBalanceThresholdXlm !== undefined &&
-        alertService.isEnabled() &&
-        Boolean(config.horizonUrl),
-      threshold_xlm: config.alerting.lowBalanceThresholdXlm ?? null,
-      check_interval_ms: config.alerting.checkIntervalMs,
-      cooldown_ms: config.alerting.cooldownMs,
-      slack_configured: Boolean(config.alerting.slackWebhookUrl),
-      email_configured: Boolean(config.alerting.email),
-    },
-  });
-});
-
-// Fee bump endpoint
-app.post(
-  "/fee-bump",
-  apiKeyMiddleware,
-  apiKeyRateLimit,
-  tenantTierTxLimit,
-  limiter,
-  (req: Request, res: Response, next: NextFunction) => {
-    void feeBumpHandler(req, res, config, next);
-  },
-);
-
-app.post(
-  "/fee-bump/batch",
-  apiKeyMiddleware,
-  apiKeyRateLimit,
-  tenantTierTxLimit,
-  limiter,
-  (req: Request, res: Response, next: NextFunction) => {
-    feeBumpBatchHandler(req, res, next, config);
-  },
-);
-
-app.post("/test/add-transaction", (req: Request, res: Response) => {
-  const { hash, status = "pending", tenantId = "test-tenant" } = req.body;
-
-  if (!hash) {
-    res.status(400).json({ error: "Transaction hash is required" });
-    return;
-  }
-
-  transactionStore.addTransaction(hash, tenantId, status);
-  res.json({ message: `Transaction ${hash} added with status ${status}` });
-});
-
-app.get("/test/transactions", (req: Request, res: Response) => {
-  const transactions = transactionStore.getAllTransactions();
-  res.json({ transactions });
-});
-
-app.post(
-  "/test/alerts/low-balance",
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      if (!alertService.isEnabled()) {
-        return res.status(400).json({
-          error:
-            "No alert transport configured. Set Slack webhook or SMTP env vars first.",
-        });
-      }
-
-      await alertService.sendTestAlert(config);
-      res.json({ message: "Test low-balance alert sent" });
-    } catch (error) {
-      next(error);
-    }
-  },
-);
-
-app.get("/admin/api-keys", listApiKeysHandler);
-app.post("/admin/api-keys", upsertApiKeyHandler);
-app.patch("/admin/api-keys/:key/revoke", revokeApiKeyHandler);
-app.delete("/admin/api-keys/:key", revokeApiKeyHandler);
-
-// Sandbox endpoints (require sandbox API key)
-app.post(
-  "/sandbox/reset",
-  apiKeyMiddleware,
-  sandboxRateLimit,
-  (req: Request, res: Response, next: NextFunction) => {
-    void sandboxResetHandler(req, res, next);
-  },
-);
-app.get(
-  "/sandbox/status",
-  apiKeyMiddleware,
-  (req: Request, res: Response, next: NextFunction) => {
-    void sandboxStatusHandler(req, res, next);
-  },
-);
-
-// Admin: create sandbox API key
-app.post(
-  "/admin/sandbox/api-keys",
-  (req: Request, res: Response, next: NextFunction) => {
-    void createSandboxApiKeyHandler(req, res, next);
-  },
-);
-app.get("/admin/subscription-tiers", listSubscriptionTiersHandler);
-app.patch(
-  "/admin/tenants/:tenantId/subscription-tier",
-  updateTenantSubscriptionTierHandler,
-);
-app.get("/admin/signers", listSignersHandler(config));
-app.post("/admin/signers", addSignerHandler(config));
-app.delete("/admin/signers/:publicKey", removeSignerHandler(config));
-app.get("/admin/device-tokens", listDeviceTokensHandler);
-app.post("/admin/device-tokens", registerDeviceTokenHandler);
-app.delete("/admin/device-tokens/:id", deleteDeviceTokenHandler);
-
-app.post(
-  "/stripe/webhook",
-  express.raw({ type: "application/json" }),
-  stripeWebhookHandler,
-);
-app.post("/create-checkout-session", createCheckoutSessionHandler);
-
-app.use(notFoundHandler);
-app.use(createGlobalErrorHandler(slackNotifier));
-
-const PORT = process.env.PORT || 3000;
-
-let ledgerMonitor: ReturnType<typeof initializeLedgerMonitor> | null = null;
-let balanceMonitor: ReturnType<typeof initializeBalanceMonitor> | null = null;
-let incidentMonitor: ReturnType<typeof initializeIncidentMonitor> | null = null;
-let shuttingDown = false;
-let server: ReturnType<typeof app.listen> | null = null;
-
-async function shutdown(signal: string): Promise<void> {
-  if (shuttingDown) {
-    return;
-  }
-
-  shuttingDown = true;
-  await slackNotifier.notifyServerLifecycle({
-    detail: `Signal received: ${signal}`,
-    phase: "stop",
-    timestamp: new Date(),
-  });
-
-  ledgerMonitor?.stop();
-  balanceMonitor?.stop();
-  incidentMonitor?.stop();
-
-  if (server) {
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 2_000).unref();
-    return;
-  }
-
-  process.exit(0);
-}
-
-// --- Background Workers ---
-let ledgerMonitorInstance: any = null;
-if (config.horizonUrls.length > 0) {
-  try {
-    ledgerMonitorInstance = initializeLedgerMonitor(config);
-    ledgerMonitorInstance.start();
-    logger.info("Ledger monitor worker started");
-  } catch (error) {
-    logger.error(
-      { ...serializeError(error) },
-      "Failed to start ledger monitor",
-    );
-  }
-} else {
-  logger.info("No Horizon URLs configured; ledger monitor disabled");
-}
-
-if (
-  config.horizonUrl &&
-  config.alerting.lowBalanceThresholdXlm !== undefined &&
-  alertService.isEnabled()
-) {
-  try {
-    balanceMonitor = initializeBalanceMonitor(config, alertService);
-    balanceMonitor.start();
-    logger.info("Balance monitor worker started");
-  } catch (error) {
-    logger.error(
-      { ...serializeError(error) },
-      "Failed to start balance monitor",
-    );
-  }
-} else {
-  logger.info(
-    "Low balance alerting disabled - missing Horizon URL, threshold, or alert transport",
-  );
-}
-
-if (pagerDutyNotifier.isConfigured() || fcmNotifier.isConfigured()) {
-  try {
-    incidentMonitor = initializeIncidentMonitor(
-      config,
-      pagerDutyNotifier,
-      {},
-      fcmNotifier,
-    );
-    incidentMonitor.start();
-    logger.info("Incident monitor worker started");
-  } catch (error) {
-    logger.error(
-      { ...serializeError(error) },
-      "Failed to start incident monitor",
-    );
-  }
-} else {
-  logger.info("PagerDuty incident alerting disabled - routing key not set");
-}
-
-server = app.listen(PORT, () => {
-  logger.info(
-    {
-      fee_payers_loaded: config.feePayerAccounts.length,
-      fee_payer_public_keys: config.feePayerAccounts.map(
-        (account) => account.publicKey,
-      ),
-      horizon_node_count: config.horizonUrls.length,
-      horizon_nodes: config.horizonUrls,
-      horizon_selection_strategy: config.horizonSelectionStrategy,
-      port: PORT,
-      url: `http://0.0.0.0:${PORT}`,
-    },
-    "Fluid server started",
-  );
-
-  // Start sandbox daily auto-reset worker
-  startSandboxAutoReset();
-});
+# Sandbox environment
+# URL of the local Stellar Quickstart instance used for sandbox API keys.
+# In Docker Compose this is automatically set to http://stellar-quickstart:8000
+SANDBOX_HORIZON_URL=http://localhost:8000
+# Rate limit (requests per window) applied to sandbox API keys (default: 10)
+SANDBOX_RATE_LIMIT_MAX=10
+# How often (ms) the auto-reset worker checks for stale sandbox keys (default: 86400000 = 24h)
+SANDBOX_AUTO_RESET_INTERVAL_MS=86400000
