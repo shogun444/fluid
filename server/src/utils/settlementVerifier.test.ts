@@ -18,13 +18,14 @@ describe("settlementVerifier", () => {
   const issuerKeypair = StellarSdk.Keypair.random();
   const wrongDestKeypair = StellarSdk.Keypair.random();
   const btcIssuerKeypair = StellarSdk.Keypair.random();
+  const settlementToken = `USDC:${issuerKeypair.publicKey()}`;
 
   const mockConfig: Config = {
     feePayerAccounts: [
       {
         publicKey: feePayerKeypair.publicKey(),
         keypair: feePayerKeypair,
-        secretSource: { type: "env", secret: feePayerKeypair.secret() },
+        secretSource: { type: "env", secret: "placeholder-test-secret" },
       },
     ],
     signerPool: {
@@ -93,12 +94,11 @@ describe("settlementVerifier", () => {
         }),
       ]);
 
-      const token = `USDC:${issuerKeypair.publicKey()}`;
-      const result = verifySettlementPayment(tx, { token, requiredAmountStroops: 200 }, mockConfig);
+      const result = verifySettlementPayment(tx, { token: settlementToken, requiredAmountStroops: 200 }, mockConfig);
 
       expect(result.isValid).toBe(true);
       expect(parseFloat(result.actualAmount!)).toBeCloseTo(0.00002, 7);
-      expect(result.assetCode).toBe(token);
+      expect(result.assetCode).toBe(settlementToken);
     });
 
     it("should reject insufficient payment amount", () => {
@@ -142,8 +142,7 @@ describe("settlementVerifier", () => {
         }),
       ]);
 
-      const token = `USDC:${issuerKeypair.publicKey()}`;
-      const result = verifySettlementPayment(tx, { token, requiredAmountStroops: 200 }, mockConfig);
+      const result = verifySettlementPayment(tx, { token: settlementToken, requiredAmountStroops: 200 }, mockConfig);
 
       expect(result.isValid).toBe(false);
       expect(result.reason).toContain("No settlement payment found");
@@ -171,9 +170,8 @@ describe("settlementVerifier", () => {
     });
 
     it("should return requirement when token is specified", () => {
-      const token = `USDC:${issuerKeypair.publicKey()}`;
-      const result = extractSettlementRequirement(token, 200);
-      expect(result).toEqual({ token, requiredAmountStroops: 200 });
+      const result = extractSettlementRequirement(settlementToken, 200);
+      expect(result).toEqual({ token: settlementToken, requiredAmountStroops: 200 });
     });
 
     it("should use default fee amount when not specified", () => {

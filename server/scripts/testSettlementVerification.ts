@@ -4,6 +4,8 @@ import { loadConfig } from "../src/config";
 
 // Test configuration
 const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
+const issuerPublicKey = StellarSdk.Keypair.random().publicKey();
+const settlementToken = `USDC:${issuerPublicKey}`;
 
 async function testSettlementVerification() {
   console.log("=== Settlement Verification Test ===\n");
@@ -111,7 +113,7 @@ async function testSettlementVerification() {
 
   // Test 4: Path payment with USDC
   console.log("Test 4: Path payment with USDC");
-  const usdcAsset = new StellarSdk.Asset("USDC", "GISSUER1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF123456");
+  const usdcAsset = new StellarSdk.Asset("USDC", issuerPublicKey);
   
   const pathPaymentTx = new StellarSdk.TransactionBuilder(sourceAccount, {
     fee: "100",
@@ -133,7 +135,7 @@ async function testSettlementVerification() {
 
   const result4 = verifySettlementPayment(
     pathPaymentTx,
-    { token: "USDC:GISSUER1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF123456", requiredAmountStroops: 200 },
+    { token: settlementToken, requiredAmountStroops: 200 },
     config
   );
 
@@ -188,8 +190,8 @@ function testExtractSettlementRequirement() {
   console.log(`XLM token: ${result2?.token === "XLM" && result2.requiredAmountStroops === 200 ? "✅ PASS" : "❌ FAIL"}`);
 
   // Test 3: USDC token
-  const result3 = extractSettlementRequirement("USDC:GISSUER1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF123456", 200);
-  console.log(`USDC token: ${result3?.token === "USDC:GISSUER1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF123456" && result3.requiredAmountStroops === 200 ? "✅ PASS" : "❌ FAIL"}`);
+  const result3 = extractSettlementRequirement(settlementToken, 200);
+  console.log(`USDC token: ${result3?.token === settlementToken && result3.requiredAmountStroops === 200 ? "✅ PASS" : "❌ FAIL"}`);
 
   // Test 4: Default fee amount
   const result4 = extractSettlementRequirement("XLM");

@@ -222,6 +222,18 @@ export function DeveloperPortalLanding() {
             >
               Documentation
             </a>
+            <Link
+              href="/plugins"
+              className="text-sm font-medium text-primary hover:underline"
+            >
+              Plugin Marketplace
+            </Link>
+            <Link
+              href="/sdk"
+              className="text-sm font-medium text-primary hover:underline"
+            >
+              SDK Registry
+            </Link>
             <a
               href={github}
               className="text-sm font-medium text-primary hover:underline"
@@ -238,6 +250,9 @@ export function DeveloperPortalLanding() {
             >
               Discord
             </a>
+            <Link href="/forum" className="text-sm font-medium text-primary hover:underline">
+              Community Forum
+            </Link>
           </nav>
         </div>
       </footer>

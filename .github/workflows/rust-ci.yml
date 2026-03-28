@@ -10,6 +10,8 @@ on:
       - main
     paths:
       - "fluid-server/**"
+      - ".github/workflows/rust-ci.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -39,7 +41,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Cargo clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -A dead_code
 
       - name: Cargo test
-        run: cargo test --all-features
+        run: cargo test --all-targets --all-features

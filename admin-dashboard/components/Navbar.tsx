@@ -29,7 +29,24 @@ export function Navbar() {
                 </div>
 
                 <nav className="flex items-center gap-4 sm:gap-8">
-                   
+                    <Link
+                        href="/plugins"
+                        className="hidden text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline-block"
+                    >
+                        Plugins
+                    </Link>
+                    <Link
+                        href="/forum"
+                        className="hidden text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline-block"
+                    >
+                        Forum
+                    </Link>
+                    <Link
+                        href="/sdk"
+                        className="hidden text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline-block"
+                    >
+                        SDKs
+                    </Link>
                     <ThemeToggle />
                 </nav>
             </div>

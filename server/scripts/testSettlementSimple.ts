@@ -8,6 +8,8 @@ import {
 const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
 const feePayerKeypair = StellarSdk.Keypair.random();
 const feePayerPublicKey = feePayerKeypair.publicKey();
+const issuerPublicKey = StellarSdk.Keypair.random().publicKey();
+const settlementToken = `USDC:${issuerPublicKey}`;
 
 const mockConfig = {
   feePayerAccounts: [
@@ -148,11 +150,11 @@ function testExtractSettlementRequirement() {
 
   // Test 3: USDC token
   const result3 = extractSettlementRequirement(
-    "USDC:GISSUER1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF123456",
+    settlementToken,
     200,
   );
   console.log(
-    `USDC token: ${result3?.token === "USDC:GISSUER1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF123456" && result3.requiredAmountStroops === 200 ? "✅ PASS" : "❌ FAIL"}`,
+    `USDC token: ${result3?.token === settlementToken && result3.requiredAmountStroops === 200 ? "✅ PASS" : "❌ FAIL"}`,
   );
 
   // Test 4: Default fee amount

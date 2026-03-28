@@ -1,5 +1,6 @@
-mod db;
-mod metrics;
+mod config;
+mod error;
+mod horizon;
 mod state;
 mod stellar;
 mod xdr;
@@ -14,15 +15,14 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use fluid_server::config::load_config;
-use db::create_pool;
-use fluid_server::error::AppError;
+use config::load_config;
+use error::AppError;
+use horizon::HorizonNodeStatus;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPool;
 use state::{
-    iso_now, utc_day_start_ms, ApiKeyConfig, AppState, HealthFeePayer, HorizonNodeStatus,
-    RateLimitEntry, RateLimitResult, SignerPool, TransactionRecord, API_KEYS,
-    REVALIDATION_INTERVAL_SECS,
+    iso_now, utc_day_start_ms, ApiKeyConfig, AppState, HealthFeePayer, RateLimitEntry,
+    RateLimitResult, TransactionRecord, API_KEYS,
 };
 use std::{net::SocketAddr, sync::Arc, time::Instant};
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer};
