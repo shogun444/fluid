@@ -1,11 +1,11 @@
 import { auth } from "@/auth";
 import Link from "next/link";
-import { WebhookSettingsManager } from "@/components/dashboard/WebhookSettingsManager";
-import { getWebhookSettingsPageData } from "@/lib/webhook-settings-data";
+import { WebhookDlqManager } from "@/components/dashboard/WebhookDlqManager";
+import { getWebhookDlqPageData } from "@/lib/webhook-dlq-data";
 
-export default async function AdminWebhooksPage() {
+export default async function AdminWebhookDlqPage() {
   const session = await auth();
-  const { rows, source } = await getWebhookSettingsPageData();
+  const { items, source } = await getWebhookDlqPageData();
 
   return (
     <main className="min-h-screen bg-slate-100">
@@ -17,10 +17,10 @@ export default async function AdminWebhooksPage() {
                 Fluid Admin
               </p>
               <h1 className="mt-2 text-3xl font-bold text-slate-900">
-                Webhook Settings
+                Webhook Dead-Letter Queue
               </h1>
               <p className="mt-2 max-w-2xl text-sm text-slate-600">
-                Configure which webhook event types each tenant should receive before dispatch.
+                Inspect and replay webhook deliveries that failed after exhausting all retry attempts.
               </p>
             </div>
             <div className="flex items-center gap-4">
@@ -29,20 +29,14 @@ export default async function AdminWebhooksPage() {
                   {session?.user?.email}
                 </div>
                 <div>
-                  {source === "live" ? "Live server data" : "Sample settings data"}
+                  {source === "live" ? "Live server data" : "Sample DLQ data"}
                 </div>
               </div>
               <Link
-                href="/admin/webhooks/dlq"
-                className="inline-flex min-h-10 items-center justify-center rounded-full border border-sky-300 bg-sky-50 px-4 text-sm font-semibold text-sky-700 transition hover:border-sky-400 hover:bg-sky-100"
-              >
-                Dead-Letter Queue
-              </Link>
-              <Link
-                href="/admin/dashboard"
+                href="/admin/webhooks"
                 className="inline-flex min-h-10 items-center justify-center rounded-full border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
               >
-                Back to dashboard
+                Back to webhooks
               </Link>
             </div>
           </div>
@@ -50,7 +44,7 @@ export default async function AdminWebhooksPage() {
       </div>
 
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        <WebhookSettingsManager initialRows={rows} />
+        <WebhookDlqManager initialItems={items} />
       </div>
     </main>
   );
