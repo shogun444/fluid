@@ -249,6 +249,21 @@ model DigestUnsubscribe {
   createdAt DateTime @default(now())
 }
 
+// Audit log — records admin and system actions with optional AI-generated summaries.
+model AuditLog {
+  id        String   @id @default(uuid())
+  actor     String   // user ID, "system", or service name
+  action    String   // e.g. "tenant.create", "apikey.revoke", "signer.add"
+  target    String?  // affected resource ID
+  metadata  String?  // JSON blob with extra context
+  aiSummary String?  // One-line AI-generated summary
+  createdAt DateTime @default(now())
+
+  @@index([actor])
+  @@index([action])
+  @@index([createdAt])
+}
+
 // Chain registry — operator-managed list of supported Stellar networks.
 // Fee payer secret is stored AES-256-GCM encrypted (same scheme as SignerSecret).
 model ChainRegistry {
