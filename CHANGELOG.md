@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/Stellar-Fluid/fluid/compare/v1.9.0...v1.10.0) (2026-03-29)
+
+
+### Features
+
+* unified per-chain fee oracle with usd conversion ([fd7cdd7](https://github.com/Stellar-Fluid/fluid/commit/fd7cdd798a0a1efef586fcf62d86ac688d71923f))
+
 # [1.9.0](https://github.com/Stellar-Fluid/fluid/compare/v1.8.0...v1.9.0) (2026-03-29)
 
 
