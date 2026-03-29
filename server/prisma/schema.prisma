@@ -25,6 +25,7 @@ model SubscriptionTier {
 model Tenant {
   id                 String            @id @default(uuid())
   name               String
+  contactEmail       String?
   subscriptionTierId String
   subscriptionTier   SubscriptionTier  @relation(fields: [subscriptionTierId], references: [id])
   dailyQuotaStroops  BigInt            @default(1000000) // 0.1 XLM default
@@ -32,6 +33,9 @@ model Tenant {
   webhookUrl         String?
   webhookSecret      String?
   webhookEventTypes  String?
+  deletedAt          DateTime?
+  erasureRequestedAt DateTime?
+  scheduledPurgeAt   DateTime?
   apiKeys                ApiKey[]
   webhookDeliveries      WebhookDelivery[]
   webhookDlqEntries      WebhookDlq[]
@@ -44,6 +48,9 @@ model Tenant {
   updatedAt          DateTime          @updatedAt
 
   @@index([subscriptionTierId])
+  @@index([contactEmail])
+  @@index([deletedAt])
+  @@index([scheduledPurgeAt])
 }
 
 model ApiKey {
@@ -196,7 +203,7 @@ model Transaction {
   id          String   @id @default(uuid())
   txHash      String?  // The hash of the fee-bump transaction
   innerTxHash String   // The hash of the original transaction
-  tenantId    String
+  tenantId    String?
   status      String   // PENDING, SUCCESS, FAILED
   costStroops BigInt
   category    String   @default("Other")
@@ -249,36 +256,28 @@ model StatusSubscription {
 
   @@index([active])
 }
-/// Tracks email addresses that have opted out of the daily digest.
-model AuditLog {
-  id        String   @id @default(uuid())
-  eventType String
-  actor     String
-  payload   Json?
-  timestamp DateTime @default(now())
-
-  @@index([eventType])
-  @@index([actor])
-  @@index([timestamp])
-}
-
 model DigestUnsubscribe {
   email     String   @id
   createdAt DateTime @default(now())
 }
 
-// Audit log — records admin and system actions with optional AI-generated summaries.
+// Audit log — supports both legacy event exports and newer admin summaries.
 model AuditLog {
   id        String   @id @default(uuid())
+  eventType String?
   actor     String   // user ID, "system", or service name
-  action    String   // e.g. "tenant.create", "apikey.revoke", "signer.add"
+  action    String?  // e.g. "tenant.create", "apikey.revoke", "signer.add"
   target    String?  // affected resource ID
+  payload   Json?
   metadata  String?  // JSON blob with extra context
   aiSummary String?  // One-line AI-generated summary
+  timestamp DateTime @default(now())
   createdAt DateTime @default(now())
 
+  @@index([eventType])
   @@index([actor])
   @@index([action])
+  @@index([timestamp])
   @@index([createdAt])
 }
 

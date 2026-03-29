@@ -101,16 +101,20 @@ import { getFeeMultiplierHandler } from "./handlers/adminFeeMultiplier";
 import { estimateFeeHandler } from "./handlers/estimate";
 import { exportAuditLogHandler } from "./handlers/adminAuditLog";
 import { ensureAuditLogTableIntegrity } from "./services/auditLogger";
-import swaggerUi from "swagger-ui-express";
 import { listAuditLogsHandler } from "./handlers/adminAuditLogs";
 import { startAuditSummaryWorker } from "./services/auditLog";
 import { swaggerSpec } from "./swagger";
 import { initializeTreasuryRefill } from "./workers/treasuryRefill";
 import { initializeDigestWorker } from "./workers/digestWorker";
+import {
+  deleteCurrentTenantHandler,
+  deleteTenantByAdminHandler,
+} from "./handlers/tenantErasure";
 import { transactionStore } from "./workers/transactionStore";
 import { TreasuryRebalancer } from "./services/treasuryRebalancer";
 import { dailyScoringWorker } from "./workers/dailyScoringWorker";
 import { crossChainSyncService } from "./services/crossChainSyncService";
+import { initializeTenantErasureWorker } from "./workers/tenantErasureWorker";
 
 dotenv.config();
 const logger = createLogger({ component: "server" });
@@ -328,6 +332,10 @@ app.post(
   },
 );
 
+app.delete("/tenant", apiKeyMiddleware, (req: Request, res: Response, next: NextFunction) => {
+  void deleteCurrentTenantHandler(req, res, next);
+});
+
 app.post("/test/add-transaction", (req: Request, res: Response) => {
   const { hash, status = "pending", tenantId = "test-tenant" } = req.body;
 
@@ -374,6 +382,9 @@ app.patch(
   "/admin/tenants/:tenantId/subscription-tier",
   updateTenantSubscriptionTierHandler,
 );
+app.delete("/admin/tenants/:tenantId", (req: Request, res: Response, next: NextFunction) => {
+  void deleteTenantByAdminHandler(req, res, next);
+});
 app.get("/admin/signers", listSignersHandler(config));
 app.post("/admin/signers", addSignerHandler(config));
 app.delete("/admin/signers/:publicKey", removeSignerHandler(config));
@@ -570,6 +581,7 @@ let ledgerMonitor: ReturnType<typeof initializeLedgerMonitor> | null = null;
 let balanceMonitor: ReturnType<typeof initializeBalanceMonitor> | null = null;
 let incidentMonitor: ReturnType<typeof initializeIncidentMonitor> | null = null;
 let digestWorker: ReturnType<typeof initializeDigestWorker> | null = null;
+let tenantErasureWorker: ReturnType<typeof initializeTenantErasureWorker> | null = null;
 let shuttingDown = false;
 let server: ReturnType<typeof app.listen> | null = null;
 
@@ -589,6 +601,7 @@ async function shutdown(signal: string): Promise<void> {
   balanceMonitor?.stop();
   incidentMonitor?.stop();
   digestWorker?.stop();
+  tenantErasureWorker?.stop();
   feeManager.stop();
   stopChainRegistryHotReload();
   crossChainSyncService.stop();
@@ -697,6 +710,17 @@ try {
   logger.error(
     { ...serializeError(error) },
     "Failed to start daily digest worker",
+  );
+}
+
+try {
+  tenantErasureWorker = initializeTenantErasureWorker();
+  tenantErasureWorker.start();
+  logger.info("Tenant erasure worker started");
+} catch (error) {
+  logger.error(
+    { ...serializeError(error) },
+    "Failed to start tenant erasure worker",
   );
 }
 
