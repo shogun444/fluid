@@ -56,6 +56,7 @@ import {
 } from "./handlers/stripe";
 import { getHorizonFailoverClient } from "./horizon/failoverClient";
 import { apiKeyMiddleware } from "./middleware/apiKeys";
+import { soc2RequestLogger } from "./middleware/soc2Logger";
 import {
   createGlobalErrorHandler,
   notFoundHandler,
@@ -150,6 +151,7 @@ treasuryRebalancer.setAlertService(alertService);
 
 const app = express();
 app.use(express.json());
+app.use(soc2RequestLogger);
 
 // Use Redis-backed store for global IP rate limiting. Falls back to memory store if Redis unavailable.
 const windowSeconds = Math.max(1, Math.ceil(config.rateLimitWindowMs / 1000));
