@@ -102,6 +102,14 @@ import {
 import { initializeFeeManager } from "./services/feeManager";
 import { initializeOFACScreening, stopOFACScreening } from "./services/ofacScreening";
 import { initializeRegionalDbs, DEFAULT_REGION } from "./services/regionRouter";
+import { requirePermission } from "./utils/adminAuth";
+import {
+  adminLoginHandler,
+  listAdminUsersHandler,
+  createAdminUserHandler,
+  updateAdminUserRoleHandler,
+  deactivateAdminUserHandler,
+} from "./handlers/adminUsers";
 import { listTransactionsHandler } from "./handlers/adminTransactions";
 import {
   listSARReportsHandler,
@@ -404,34 +412,49 @@ app.post(
   },
 );
 
-app.get("/admin/api-keys", listApiKeysHandler);
-app.post("/admin/api-keys", upsertApiKeyHandler);
-app.patch("/admin/api-keys/:key/revoke", revokeApiKeyHandler);
-app.patch("/admin/api-keys/:key/chains", updateApiKeyChainsHandler);
-app.delete("/admin/api-keys/:key", revokeApiKeyHandler);
-app.get("/admin/subscription-tiers", listSubscriptionTiersHandler);
+// ── RBAC: Admin user management ───────────────────────────────────────────────
+app.post("/admin/auth/login", adminLoginHandler);
+app.get("/admin/users", requirePermission("manage_users"), listAdminUsersHandler);
+app.post("/admin/users", requirePermission("manage_users"), createAdminUserHandler);
+app.patch("/admin/users/:id/role", requirePermission("manage_users"), updateAdminUserRoleHandler);
+app.delete("/admin/users/:id", requirePermission("manage_users"), deactivateAdminUserHandler);
+
+// ── API keys ──────────────────────────────────────────────────────────────────
+app.get("/admin/api-keys", requirePermission("view_api_keys"), listApiKeysHandler);
+app.post("/admin/api-keys", requirePermission("manage_api_keys"), upsertApiKeyHandler);
+app.patch("/admin/api-keys/:key/revoke", requirePermission("manage_api_keys"), revokeApiKeyHandler);
+app.patch("/admin/api-keys/:key/chains", requirePermission("manage_api_keys"), updateApiKeyChainsHandler);
+app.delete("/admin/api-keys/:key", requirePermission("manage_api_keys"), revokeApiKeyHandler);
+
+// ── Tenants & subscription tiers ──────────────────────────────────────────────
+app.get("/admin/subscription-tiers", requirePermission("view_tenants"), listSubscriptionTiersHandler);
 app.patch(
   "/admin/tenants/:tenantId/subscription-tier",
+  requirePermission("manage_tenants"),
   updateTenantSubscriptionTierHandler,
 );
 app.delete("/admin/tenants/:tenantId", (req: Request, res: Response, next: NextFunction) => {
   void deleteTenantByAdminHandler(req, res, next);
 });
-app.get("/admin/signers", listSignersHandler(config));
-app.post("/admin/signers", addSignerHandler(config));
-app.delete("/admin/signers/:publicKey", removeSignerHandler(config));
+
+// ── Signers ───────────────────────────────────────────────────────────────────
+app.get("/admin/signers", requirePermission("view_signers"), listSignersHandler(config));
+app.post("/admin/signers", requirePermission("manage_signers"), addSignerHandler(config));
+app.delete("/admin/signers/:publicKey", requirePermission("manage_signers"), removeSignerHandler(config));
+
+// ── Transactions & analytics ──────────────────────────────────────────────────
 app.get("/admin/prices", getPriceHandler);
-app.get("/admin/transactions", listTransactionsHandler);
-app.get("/admin/analytics/spend-forecast", getSpendForecastHandler(config));
-app.get("/admin/fee-multiplier", getFeeMultiplierHandler);
-app.get("/admin/multi-chain/stats", getMultiChainStatsHandler(config));
-app.get("/admin/device-tokens", listDeviceTokensHandler);
-app.post("/admin/device-tokens", registerDeviceTokenHandler);
-app.delete("/admin/device-tokens/:id", deleteDeviceTokenHandler);
-app.get("/admin/webhooks/dlq", listDlqHandler);
-app.post("/admin/webhooks/dlq/replay", replayDlqHandler);
-app.post("/admin/webhooks/dlq/delete", deleteDlqHandler);
-app.get("/admin/audit-log/export", exportAuditLogHandler);
+app.get("/admin/transactions", requirePermission("view_transactions"), listTransactionsHandler);
+app.get("/admin/analytics/spend-forecast", requirePermission("view_analytics"), getSpendForecastHandler(config));
+app.get("/admin/fee-multiplier", requirePermission("manage_config"), getFeeMultiplierHandler);
+app.get("/admin/multi-chain/stats", requirePermission("view_analytics"), getMultiChainStatsHandler(config));
+app.get("/admin/device-tokens", requirePermission("view_api_keys"), listDeviceTokensHandler);
+app.post("/admin/device-tokens", requirePermission("manage_api_keys"), registerDeviceTokenHandler);
+app.delete("/admin/device-tokens/:id", requirePermission("manage_api_keys"), deleteDeviceTokenHandler);
+app.get("/admin/webhooks/dlq", requirePermission("view_transactions"), listDlqHandler);
+app.post("/admin/webhooks/dlq/replay", requirePermission("manage_config"), replayDlqHandler);
+app.post("/admin/webhooks/dlq/delete", requirePermission("manage_config"), deleteDlqHandler);
+app.get("/admin/audit-log/export", requirePermission("view_audit_logs"), exportAuditLogHandler);
 
 // Bridge settlement admin routes
 app.get("/admin/bridge-settlements", listBridgeSettlementsHandler);
