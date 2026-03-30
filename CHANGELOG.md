@@ -1,3 +1,122 @@
+# [1.22.0](https://github.com/Stellar-Fluid/fluid/compare/v1.21.1...v1.22.0) (2026-03-30)
+
+
+### Features
+
+* role-based access control for admin dashboard ([827d216](https://github.com/Stellar-Fluid/fluid/commit/827d21618ea2a1da9281a3e18bfcc47b98935f05)), closes [#208](https://github.com/Stellar-Fluid/fluid/issues/208)
+
+## [1.21.1](https://github.com/Stellar-Fluid/fluid/compare/v1.21.0...v1.21.1) (2026-03-30)
+
+
+### Bug Fixes
+
+* require terms acceptance before tenant API key issuance ([cb39ae7](https://github.com/Stellar-Fluid/fluid/commit/cb39ae7c9f46c61a197384cec856e6223c68c984))
+
+# [1.21.0](https://github.com/Stellar-Fluid/fluid/compare/v1.20.0...v1.21.0) (2026-03-30)
+
+
+### Bug Fixes
+
+* remove duplicate base64 dependency in fluid-server Cargo.toml ([816e856](https://github.com/Stellar-Fluid/fluid/commit/816e8565831cb9a695b87ecfa47a307cceb9be89))
+
+
+### Features
+
+* add multi-chain treasury overview ([e160098](https://github.com/Stellar-Fluid/fluid/commit/e1600985bec3e25f78b8d7f3e9c1f463c6e8ca43))
+* data residency configuration for multi-region deployments ([870cfc2](https://github.com/Stellar-Fluid/fluid/commit/870cfc2f1c036051d69940d480258310d00fb499)), closes [#211](https://github.com/Stellar-Fluid/fluid/issues/211)
+* implement bridge monitoring and stall alerting ([1931c9b](https://github.com/Stellar-Fluid/fluid/commit/1931c9bc04c332e86323d25300726e1e7ad30449))
+
+# [1.20.0](https://github.com/Stellar-Fluid/fluid/compare/v1.19.0...v1.20.0) (2026-03-29)
+
+
+### Features
+
+* implement transaction data export to csv and pdf ([0ceb553](https://github.com/Stellar-Fluid/fluid/commit/0ceb5535ec99931650fb621bc46e43afa959154b))
+
+# [1.19.0](https://github.com/Stellar-Fluid/fluid/compare/v1.18.0...v1.19.0) (2026-03-29)
+
+
+### Features
+
+* per-chain api key scoping ([a540424](https://github.com/Stellar-Fluid/fluid/commit/a540424e3cd7d3223f79dd37c914ea63e7e2512d)), closes [#198](https://github.com/Stellar-Fluid/fluid/issues/198)
+
+# [1.18.0](https://github.com/Stellar-Fluid/fluid/compare/v1.17.0...v1.18.0) (2026-03-29)
+
+
+### Features
+
+* unified multi-chain dashboard tab ([1ee90a0](https://github.com/Stellar-Fluid/fluid/commit/1ee90a02485e70ee721bfb94320e3d885958c171)), closes [#197](https://github.com/Stellar-Fluid/fluid/issues/197)
+
+# [1.17.0](https://github.com/Stellar-Fluid/fluid/compare/v1.16.0...v1.17.0) (2026-03-29)
+
+
+### Features
+
+* natural language query interface for transaction history ([3eb0894](https://github.com/Stellar-Fluid/fluid/commit/3eb0894412291f862c6518fca8a50cf8eadc5f71))
+
+# [1.16.0](https://github.com/Stellar-Fluid/fluid/compare/v1.15.0...v1.16.0) (2026-03-29)
+
+
+### Features
+
+* cosmos ibc feegrant module adapter ([d828038](https://github.com/Stellar-Fluid/fluid/commit/d82803839a55ba6abeca5705ba733d2b9031a36b)), closes [#195](https://github.com/Stellar-Fluid/fluid/issues/195)
+
+# [1.15.0](https://github.com/Stellar-Fluid/fluid/compare/v1.14.0...v1.15.0) (2026-03-29)
+
+
+### Features
+
+* ai-generated audit log summaries ([8dde1f6](https://github.com/Stellar-Fluid/fluid/commit/8dde1f66fec42d1166d8f20a698fe09fc8622570))
+
+# [1.14.0](https://github.com/Stellar-Fluid/fluid/compare/v1.13.0...v1.14.0) (2026-03-29)
+
+
+### Features
+
+* soroban - evm contract state sync proof ([e752023](https://github.com/Stellar-Fluid/fluid/commit/e752023fe0977a6501b743ed1fe29f1c21dcaf51))
+
+# [1.13.0](https://github.com/Stellar-Fluid/fluid/compare/v1.12.0...v1.13.0) (2026-03-29)
+
+
+### Features
+
+* wormhole integration ([1b7b86b](https://github.com/Stellar-Fluid/fluid/commit/1b7b86b1c39e157019c22ef7b0934d8f451072a6))
+
+# [1.12.0](https://github.com/Stellar-Fluid/fluid/compare/v1.11.0...v1.12.0) (2026-03-29)
+
+
+### Features
+
+* embedded ai support chatbot for dashboard operators ([d2d10a4](https://github.com/Stellar-Fluid/fluid/commit/d2d10a4d50a4c34453aea7d3d6eebf19498e5f5a))
+
+# [1.11.0](https://github.com/Stellar-Fluid/fluid/compare/v1.10.0...v1.11.0) (2026-03-29)
+
+
+### Features
+
+* ai-powered suspicious account auto-blocklist ([b774af4](https://github.com/Stellar-Fluid/fluid/commit/b774af4dd62f1a595dc3fa5979730c1e3d81acc4))
+
+# [1.10.0](https://github.com/Stellar-Fluid/fluid/compare/v1.9.0...v1.10.0) (2026-03-29)
+
+
+### Features
+
+* unified per-chain fee oracle with usd conversion ([fd7cdd7](https://github.com/Stellar-Fluid/fluid/commit/fd7cdd798a0a1efef586fcf62d86ac688d71923f))
+
+# [1.9.0](https://github.com/Stellar-Fluid/fluid/compare/v1.8.0...v1.9.0) (2026-03-29)
+
+
+### Features
+
+* implement chain-agnostic fee sponsorship for Stellar, EVM, and Solana ([32dad8c](https://github.com/Stellar-Fluid/fluid/commit/32dad8cc04cae8ffff2ee2fe3a4777c530af02c6))
+
+# [1.8.0](https://github.com/Stellar-Fluid/fluid/compare/v1.7.0...v1.8.0) (2026-03-29)
+
+
+### Features
+
+* **docs:** automated documentation generator and publishing pipeline ([2d8db9e](https://github.com/Stellar-Fluid/fluid/commit/2d8db9e8c9e70ed60a171c96dde0590bd828586e))
+
 # [1.7.0](https://github.com/Stellar-Fluid/fluid/compare/v1.6.0...v1.7.0) (2026-03-29)
 
 

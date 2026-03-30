@@ -11,6 +11,15 @@ import {
   SubscriptionTierName,
   toTierCode,
 } from "../models/subscriptionTier";
+import {
+  Region,
+  DEFAULT_REGION,
+  getDbForRegion,
+  findApiKeyAcrossRegions,
+} from "../services/regionRouter";
+
+export const VALID_CHAINS = ["stellar", "evm", "solana", "cosmos"] as const;
+export type Chain = (typeof VALID_CHAINS)[number];
 
 export interface ApiKeyConfig {
   key: string;
@@ -26,6 +35,17 @@ export interface ApiKeyConfig {
   windowMs: number;
   dailyQuotaStroops: number;
   isSandbox: boolean;
+  allowedChains: Chain[];
+  region: Region;
+}
+
+function parseAllowedChains(raw?: string | null): Chain[] {
+  if (!raw) return ["stellar"];
+  const chains = raw
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((s): s is Chain => (VALID_CHAINS as readonly string[]).includes(s));
+  return chains.length > 0 ? chains : ["stellar"];
 }
 
 const API_KEYS = new Map<string, ApiKeyConfig>();
@@ -67,27 +87,22 @@ export async function apiKeyMiddleware(
       // eslint-disable-next-line no-console
       console.log("[Redis] Cache Hit for API key:", maskApiKey(apiKey));
 
-      res.locals.apiKey = JSON.parse(cached) as ApiKeyConfig;
+      const apiKeyConfig = JSON.parse(cached) as ApiKeyConfig;
+      res.locals.apiKey = apiKeyConfig;
+      res.locals.db = getDbForRegion(apiKeyConfig.region ?? DEFAULT_REGION);
       return next();
     }
   } catch (err) {
     // If Redis fails, fall back to DB/in-memory lookup below.
   }
 
-  // 2) Try DB (Prisma) lookup
+  // 2) Try DB (Prisma) lookup — searches all configured regional DBs
   try {
-    const keyRecord = await prisma.apiKey.findUnique({
-      where: { key: apiKey },
-      include: {
-        tenant: {
-          include: {
-            subscriptionTier: true,
-          },
-        },
-      },
-    });
+    const found = await findApiKeyAcrossRegions(apiKey);
 
-    if (keyRecord) {
+    if (found) {
+      const { record: keyRecord, region } = found;
+
       // Reject revoked keys immediately
       if (!keyRecord.active) {
         return next(
@@ -99,6 +114,8 @@ export async function apiKeyMiddleware(
       const resolvedTierName = (tierRecord?.name ??
         "Free") as SubscriptionTierName;
       const resolvedRateLimit = tierRecord?.rateLimit ?? keyRecord.maxRequests;
+
+      const allowedChains = parseAllowedChains(keyRecord.allowedChains);
 
       const apiKeyConfig: ApiKeyConfig = {
         key: keyRecord.key,
@@ -114,6 +131,8 @@ export async function apiKeyMiddleware(
         windowMs: keyRecord.windowMs,
         dailyQuotaStroops: Number(keyRecord.dailyQuotaStroops),
         isSandbox: keyRecord.isSandbox ?? false,
+        allowedChains,
+        region: (keyRecord.tenant?.region as Region | undefined) ?? region,
       };
 
       // Cache the key for future requests. Non-blocking: don't fail the request on cache errors.
@@ -122,6 +141,8 @@ export async function apiKeyMiddleware(
       );
 
       res.locals.apiKey = apiKeyConfig;
+      // Attach the correct regional DB client so handlers write to the right region
+      res.locals.db = getDbForRegion(apiKeyConfig.region);
       return next();
     }
   } catch (err) {
@@ -139,6 +160,7 @@ export async function apiKeyMiddleware(
   setCachedApiKey(apiKey, JSON.stringify(apiKeyConfig), 300).catch(() => {});
 
   res.locals.apiKey = apiKeyConfig;
+  res.locals.db = getDbForRegion(apiKeyConfig.region ?? DEFAULT_REGION);
   next();
 }
 
@@ -168,4 +190,27 @@ export function deleteApiKey(key: string): void {
   API_KEYS.delete(key);
   // Also invalidate cache
   invalidateApiKeyCache(key).catch(() => {});
+}
+
+/**
+ * Middleware factory that rejects requests if the API key is not authorized
+ * for the given chain. Must be placed after `apiKeyMiddleware`.
+ */
+export function requireChain(chain: Chain) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const config = res.locals.apiKey as ApiKeyConfig | undefined;
+    if (!config) {
+      return next(new AppError("Missing API key context.", 401, "AUTH_FAILED"));
+    }
+    if (!config.allowedChains.includes(chain)) {
+      return next(
+        new AppError(
+          `API key is not authorized for the "${chain}" chain. Allowed: ${config.allowedChains.join(", ")}.`,
+          403,
+          "CHAIN_NOT_ALLOWED",
+        ),
+      );
+    }
+    next();
+  };
 }

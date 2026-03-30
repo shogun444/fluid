@@ -1,5 +1,5 @@
 import StellarSdk from "@stellar/stellar-sdk";
-import { SignerPool } from "./signing";
+import { SignerPool, SignerSelectionStrategy } from "./signing";
 
 export type HorizonSelectionStrategy = "priority" | "round_robin";
 
@@ -14,14 +14,23 @@ export interface FeePayerAccount {
 
 export interface VaultConfig {
   addr: string;
-  token?: string;
   appRole?: {
     roleId: string;
     secretId: string;
   };
   kvMount: string;
-  kvVersion: 1 | 2;
+  kvVersion: number;
   secretField: string;
+  token?: string;
+}
+
+export interface GrpcEngineConfig {
+  address: string;
+  pinnedServerCertSha256: string[];
+  serverName: string;
+  tlsCaPath: string;
+  tlsCertPath: string;
+  tlsKeyPath: string;
 }
 
 export interface SupportedAsset {
@@ -77,23 +86,27 @@ export interface EvmSettlementConfig {
 }
 
 export interface Config {
-  feePayerAccounts: FeePayerAccount[];
-  signerPool: SignerPool;
-  baseFee: number;
-  feeMultiplier: number;
-  networkPassphrase: string;
-  horizonUrl?: string;
-  horizonUrls: string[];
-  horizonSelectionStrategy: HorizonSelectionStrategy;
-  rateLimitWindowMs: number;
-  rateLimitMax: number;
   allowedOrigins: string[];
   alerting: AlertingConfig;
-  digest: DigestConfig;
-  supportedAssets?: SupportedAsset[];
-  maxXdrSize: number;
+  baseFee: number;
+  crossChainSettlementTimeoutMinutes: number;
+  digest?: DigestConfig;
+  feeMultiplier: number;
+  feePayerAccounts: FeePayerAccount[];
+  grpcEngine?: GrpcEngineConfig;
+  horizonSelectionStrategy: HorizonSelectionStrategy;
+  horizonUrl?: string;
+  horizonUrls: string[];
+  ipAllowlist: string[];
+  ipDenylist: string[];
   maxOperations: number;
+  maxXdrSize: number;
+  networkPassphrase: string;
+  rateLimitMax: number;
+  rateLimitWindowMs: number;
+  signerPool: SignerPool;
   stellarRpcUrl?: string;
+  supportedAssets?: SupportedAsset[];
   vault?: VaultConfig;
   evmSettlement?: EvmSettlementConfig;
 }
@@ -109,6 +122,17 @@ function parseCommaSeparatedList(value: string | undefined): string[] {
       .map((item) => item.trim())
       .filter(Boolean) ?? []
   );
+}
+
+function parseRequiredPath(
+  value: string | undefined,
+  name: string,
+): string {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    throw new Error(`${name} is required when gRPC engine mode is enabled`);
+  }
+  return trimmed;
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -162,6 +186,37 @@ function loadVaultConfig(): VaultConfig | undefined {
     kvMount: process.env.VAULT_KV_MOUNT?.trim() || "secret",
     kvVersion: process.env.VAULT_KV_VERSION === "1" ? 1 : 2,
     secretField: process.env.VAULT_SECRET_FIELD?.trim() || "secret",
+  };
+}
+
+function loadGrpcEngineConfig(): GrpcEngineConfig | undefined {
+  const address = process.env.FLUID_GRPC_ENGINE_ADDRESS?.trim();
+  if (!address) {
+    return undefined;
+  }
+
+  return {
+    address,
+    pinnedServerCertSha256: parseCommaSeparatedList(
+      process.env.FLUID_GRPC_ENGINE_PINNED_SERVER_CERT_SHA256,
+    ).map((value) =>
+      value.replace(/^sha256:/i, "").replace(/[^a-fA-F0-9]/g, "").toLowerCase(),
+    ),
+    serverName:
+      process.env.FLUID_GRPC_ENGINE_TLS_SERVER_NAME?.trim() ||
+      "fluid-grpc-engine.internal",
+    tlsCaPath: parseRequiredPath(
+      process.env.FLUID_GRPC_ENGINE_CLIENT_CA_PATH,
+      "FLUID_GRPC_ENGINE_CLIENT_CA_PATH",
+    ),
+    tlsCertPath: parseRequiredPath(
+      process.env.FLUID_GRPC_ENGINE_CLIENT_CERT_PATH,
+      "FLUID_GRPC_ENGINE_CLIENT_CERT_PATH",
+    ),
+    tlsKeyPath: parseRequiredPath(
+      process.env.FLUID_GRPC_ENGINE_CLIENT_KEY_PATH,
+      "FLUID_GRPC_ENGINE_CLIENT_KEY_PATH",
+    ),
   };
 }
 
@@ -291,6 +346,10 @@ export function loadConfig(): Config {
     process.env.FLUID_HORIZON_SELECTION === "round_robin"
       ? "round_robin"
       : "priority";
+  const signerSelectionStrategy: SignerSelectionStrategy =
+    process.env.FLUID_SIGNER_SELECTION === "round_robin"
+      ? "round_robin"
+      : "least_used";
 
   const rateLimitWindowMs = parsePositiveInt(
     process.env.FLUID_RATE_LIMIT_WINDOW_MS,
@@ -306,9 +365,13 @@ export function loadConfig(): Config {
     100,
   );
   const vault = loadVaultConfig();
+  const grpcEngine = loadGrpcEngineConfig();
   const supportedAssets = parseSupportedAssets(
     process.env.FLUID_SUPPORTED_ASSETS,
   );
+
+  const ipAllowlist = parseCommaSeparatedList(process.env.IP_ALLOWLIST);
+  const ipDenylist = parseCommaSeparatedList(process.env.IP_DENYLIST);
 
   const sharedConfig = {
     allowedOrigins,
@@ -328,6 +391,13 @@ export function loadConfig(): Config {
     stellarRpcUrl: process.env.STELLAR_RPC_URL?.trim() || undefined,
     supportedAssets,
     vault,
+    ipAllowlist,
+    ipDenylist,
+    grpcEngine,
+    crossChainSettlementTimeoutMinutes: parsePositiveInt(
+      process.env.CROSS_CHAIN_SETTLEMENT_TIMEOUT_MINUTES,
+      10,
+    ),
   };
 
   // ---- Vault mode ----------------------------------------------------------
@@ -368,6 +438,7 @@ export function loadConfig(): Config {
               ? `vault:${account.secretSource.secretPath}`
               : "",
         })),
+        { selectionStrategy: signerSelectionStrategy },
       ),
     };
   }
@@ -397,15 +468,9 @@ export function loadConfig(): Config {
   return {
     ...sharedConfig,
     feePayerAccounts,
-    signerPool: new SignerPool(
-      feePayerAccounts.map((account) => ({
-        keypair: account.keypair,
-        secret:
-          account.secretSource.type === "env"
-            ? account.secretSource.secret
-            : "",
-      })),
-    ),
+    signerPool: SignerPool.fromSecrets(secrets, {
+      selectionStrategy: signerSelectionStrategy,
+    }),
   };
 }
 

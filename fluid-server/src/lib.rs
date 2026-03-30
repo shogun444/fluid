@@ -1,5 +1,22 @@
 use std::fmt;
 use std::str::FromStr;
+mod blocklist;
+mod heuristics;
+
+use blocklist::Blocklist;
+use heuristics::RequestTracker;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static mut BLOCKLIST: Option<Blocklist> = None;
+static mut TRACKER: Option<RequestTracker> = None;
+
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
 
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
@@ -18,6 +35,8 @@ use wasm_bindgen::prelude::*;
 pub mod config;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod error;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod grpc;
 
 const MAX_SIGNATURES: usize = 20;
 
@@ -72,7 +91,7 @@ impl WasmSigningResult {
 }
 
 #[derive(Debug)]
-enum SigningError {
+pub enum SigningError {
     InvalidSecretKey(String),
     InvalidEnvelope(String),
     UnsupportedEnvelope(String),
@@ -129,18 +148,49 @@ pub fn sign_transaction_xdr_internal(
     unsigned_xdr: &str,
     secret_key: &str,
     network_passphrase: &str,
-) -> Result<SigningResult, Box<dyn std::error::Error>> {
+) -> Result<SigningResult, SigningError> {
     let signer = signer_context(secret_key)?;
-    let mut envelope = parse_transaction_envelope(unsigned_xdr)?;
-    let tx_hash = transaction_hash(&envelope, network_passphrase)?;
-    let signed_envelope = append_signature(&mut envelope, &signer, &tx_hash)?;
 
-    Ok(SigningResult {
-        signed_xdr: signed_envelope,
-        signer_public_key: signer.public_key,
-        transaction_hash_hex: hex::encode(tx_hash),
-        signature_count: envelope_signature_count(&envelope),
-    })
+
+//  
+let public_key = signer.public_key.clone();
+
+unsafe {
+    if BLOCKLIST.is_none() {
+        BLOCKLIST = Some(Blocklist::new());
+    }
+    if TRACKER.is_none() {
+        TRACKER = Some(RequestTracker::new());
+    }
+
+    let blocklist = BLOCKLIST.as_mut().unwrap();
+    let tracker = TRACKER.as_mut().unwrap();
+
+    if blocklist.is_blocked(&public_key, now()) {
+        return Err("Account is blocked".into());
+    }
+
+    if tracker.is_suspicious(&public_key, now()) {
+        blocklist.add(
+    public_key.clone(),
+    "Suspicious activity detected".to_string(),
+    now(),
+);
+        return Err("Account flagged and blocked".into());
+    }
+}
+//  END BLOCK
+
+let mut envelope = parse_transaction_envelope(unsigned_xdr)?;
+let tx_hash = transaction_hash(&envelope, network_passphrase)?;
+let signed_envelope = append_signature(&mut envelope, &signer, &tx_hash)?;
+
+Ok(SigningResult {
+    signed_xdr: signed_envelope,
+    signer_public_key: signer.public_key,
+    transaction_hash_hex: hex::encode(tx_hash),
+    signature_count: envelope_signature_count(&envelope),
+})
 }
 
 #[derive(Debug)]

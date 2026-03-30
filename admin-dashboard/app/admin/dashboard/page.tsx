@@ -20,6 +20,10 @@ import { fluidAdminToken, fluidServerUrl } from "@/lib/server-env";
 import { getSpendForecastData } from "@/lib/spend-chart-data";
 import { getFeeMultiplierData } from "@/lib/fee-multiplier-data";
 import { FeeEstimatorWidget } from "@/components/dashboard/FeeEstimatorWidget";
+import { MultiChainDashboard } from "@/components/dashboard/MultiChainDashboard";
+import { getMultiChainData } from "@/lib/multi-chain-data";
+import { ExpenseBreakdown } from "@/components/dashboard/ExpenseBreakdown";
+import { getExpenseBreakdownData } from "@/lib/expense-breakdown-data";
 
 export default async function AdminDashboard() {
   const session = await auth();
@@ -29,6 +33,8 @@ export default async function AdminDashboard() {
   const { keys: apiKeys } = await getApiKeysPageData();
   const spendForecast = await getSpendForecastData();
   const feeMultiplier = await getFeeMultiplierData();
+  const multiChainData = await getMultiChainData();
+  const expenseBreakdown = await getExpenseBreakdownData();
   const firstActiveKey =
     apiKeys.find((k) => k.active)?.key ?? "your-api-key-here";
 
@@ -111,9 +117,15 @@ export default async function AdminDashboard() {
           />
         </section>
 
-        {/* Spend Analytics Chart */}
+        {/* Multi-Chain Overview */}
         <section className="mt-6">
+          <MultiChainDashboard data={multiChainData} />
+        </section>
+
+        {/* Spend Analytics Charts */}
+        <section className="mt-6 grid gap-6 lg:grid-cols-2">
           <SpendChart forecast={spendForecast} />
+          <ExpenseBreakdown data={expenseBreakdown} />
         </section>
 
         <section className="mt-6">
@@ -140,6 +152,12 @@ export default async function AdminDashboard() {
               className="inline-flex min-h-10 items-center justify-center rounded-full border border-amber-300 bg-amber-50 px-4 text-sm font-semibold text-amber-700 transition hover:border-amber-400 hover:bg-amber-100"
             >
               Sandbox
+            </Link>
+            <Link
+              href="/admin/chains"
+              className="inline-flex min-h-10 items-center justify-center rounded-full border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
+            >
+              Chain registry
             </Link>
             <Link
               href="/admin/signers"

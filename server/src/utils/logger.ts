@@ -23,8 +23,37 @@ const loggerOptions: LoggerOptions = {
         service: "fluid-server",
         env: process.env.NODE_ENV ?? "development",
     },
+    messageKey: "event",
     formatters: {
         level: (level) => ({ level }),
+        log: (log) => {
+            const defaultOutcome = log.level === "error" || log.level === "fatal" ? "failure" : "success";
+            return {
+                actor: typeof log.actor === "string" && log.actor.length > 0 ? log.actor : "unknown",
+                ip: typeof log.ip === "string" && log.ip.length > 0 ? log.ip : "unknown",
+                resource: typeof log.resource === "string" && log.resource.length > 0 ? log.resource : "unknown",
+                outcome: typeof log.outcome === "string" && log.outcome.length > 0 ? log.outcome : defaultOutcome,
+                ...log,
+            };
+        },
+    },
+    redact: {
+        paths: [
+            "req.headers.authorization",
+            "req.headers.cookie",
+            "req.headers.x-api-key",
+            "req.headers.x-admin-token",
+            "req.body.*token*",
+            "req.body.*secret*",
+            "**.password",
+            "**.secret",
+            "**.token",
+            "**.api_key",
+            "**.access_key",
+            "error.response_data",
+            "error.response_status",
+        ],
+        censor: "[REDACTED]",
     },
 };
 
@@ -40,6 +69,10 @@ const transport = prettyLoggingEnabled
     : undefined;
 
 export const logger = pino(loggerOptions, transport);
+
+export function getDefaultLoggerOptions(): LoggerOptions {
+    return loggerOptions;
+}
 
 export function createLogger (bindings: Bindings): Logger {
     return logger.child(bindings);

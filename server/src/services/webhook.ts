@@ -10,7 +10,6 @@ import {
   mapTransactionStatusToWebhookEventType,
   type WebhookEventType,
 } from "./webhookEventTypes";
-
 const connection = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
 export const webhookLogger = createLogger({ component: "webhook_service" });
 

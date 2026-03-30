@@ -1,6 +1,5 @@
 import "dotenv/config";
 
-import dotenv from "dotenv";
 import cors from "cors";
 import express, { NextFunction, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
@@ -10,8 +9,14 @@ import { AppError } from "./errors/AppError";
 import {
   listApiKeysHandler,
   revokeApiKeyHandler,
+  updateApiKeyChainsHandler,
   upsertApiKeyHandler,
 } from "./handlers/adminApiKeys";
+import {
+  listBridgeSettlementsHandler,
+  resolveBridgeSettlementHandler,
+  refundBridgeSettlementHandler,
+} from "./handlers/adminBridgeSettlements";
 import {
   deleteDeviceTokenHandler,
   listDeviceTokensHandler,
@@ -58,6 +63,7 @@ import {
 } from "./handlers/stripe";
 import { getHorizonFailoverClient } from "./horizon/failoverClient";
 import { apiKeyMiddleware } from "./middleware/apiKeys";
+import { soc2RequestLogger } from "./middleware/soc2Logger";
 import {
   createGlobalErrorHandler,
   notFoundHandler,
@@ -88,22 +94,65 @@ import {
   digestUnsubscribeHandler,
   sendDigestNowHandler,
 } from "./handlers/digest";
+import {
+  createChainHandler,
+  deleteChainHandler,
+  listChainsHandler,
+  updateChainHandler,
+} from "./handlers/adminChains";
+import {
+  startChainRegistryHotReload,
+  stopChainRegistryHotReload,
+} from "./services/chainRegistryService";
 import { initializeFeeManager } from "./services/feeManager";
+import { initializeOFACScreening, stopOFACScreening } from "./services/ofacScreening";
+import { initializeRegionalDbs, DEFAULT_REGION } from "./services/regionRouter";
+import { requirePermission } from "./utils/adminAuth";
+import {
+  adminLoginHandler,
+  listAdminUsersHandler,
+  createAdminUserHandler,
+  updateAdminUserRoleHandler,
+  deactivateAdminUserHandler,
+} from "./handlers/adminUsers";
 import { listTransactionsHandler } from "./handlers/adminTransactions";
+import {
+  listSARReportsHandler,
+  getSARReportHandler,
+  reviewSARReportHandler,
+  getSARStatsHandler,
+  exportSARReportsHandler
+} from "./handlers/adminSAR";
 import { getSpendForecastHandler } from "./handlers/adminAnalytics";
 import { getFeeMultiplierHandler } from "./handlers/adminFeeMultiplier";
 import { estimateFeeHandler } from "./handlers/estimate";
 import { initializeDigestWorker } from "./workers/digestWorker";
-import { transactionStore } from "./workers/transactionStore";
+
 import { initializeTreasuryRefill } from "./workers/treasuryRefill";
 
-dotenv.config();
 const logger = createLogger({ component: "server" });
 const config = loadConfig();
+
+async function initializeAuditLog() {
+  try {
+    await ensureAuditLogTableIntegrity();
+  } catch (error) {
+    logger.error(
+      { error: error instanceof Error ? error.message : error },
+      "Failed to initialize audit log integrity",
+    );
+  }
+}
+
+initializeAuditLog();
+initializeRegionalDbs();
+
+initializeOFACScreening();
 const feeManager = initializeFeeManager(config);
 const slackNotifier = new SlackNotifier(loadSlackNotifierOptionsFromEnv());
 const pagerDutyNotifier = new PagerDutyNotifier();
 const fcmNotifier = initializeFcmNotifier();
+
 if (fcmNotifier.isConfigured()) {
   logger.info("FCM push notifications enabled");
 } else {
@@ -111,12 +160,29 @@ if (fcmNotifier.isConfigured()) {
     "FCM push notifications disabled - FCM_PROJECT_ID/FCM_CLIENT_EMAIL/FCM_PRIVATE_KEY not set",
   );
 }
+const treasuryRebalancer = new TreasuryRebalancer(config);
 const alertService = new AlertService(config.alerting, slackNotifier, {
   fcmNotifier,
+  treasuryRebalancer,
 });
+treasuryRebalancer.setAlertService(alertService);
 
 const app = express();
+
+// Respect X-Forwarded-For if running behind a proxy
+if (process.env.TRUST_PROXY === "true") {
+  app.set("trust proxy", true);
+}
+
+app.use(ipFilterMiddleware);
 app.use(express.json());
+app.use(soc2RequestLogger);
+
+// Stamp every response with the instance's home region for observability
+app.use((_req, res, next) => {
+  res.setHeader("X-Fluid-Region", DEFAULT_REGION);
+  next();
+});
 
 // Swagger UI — available at /docs
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
@@ -312,6 +378,10 @@ app.post(
   },
 );
 
+app.delete("/tenant", apiKeyMiddleware, (req: Request, res: Response, next: NextFunction) => {
+  void deleteCurrentTenantHandler(req, res, next);
+});
+
 app.post("/test/add-transaction", (req: Request, res: Response) => {
   const { hash, status = "pending", tenantId = "test-tenant" } = req.body;
 
@@ -348,28 +418,54 @@ app.post(
   },
 );
 
-app.get("/admin/api-keys", listApiKeysHandler);
-app.post("/admin/api-keys", upsertApiKeyHandler);
-app.patch("/admin/api-keys/:key/revoke", revokeApiKeyHandler);
-app.delete("/admin/api-keys/:key", revokeApiKeyHandler);
-app.get("/admin/subscription-tiers", listSubscriptionTiersHandler);
+// ── RBAC: Admin user management ───────────────────────────────────────────────
+app.post("/admin/auth/login", adminLoginHandler);
+app.get("/admin/users", requirePermission("manage_users"), listAdminUsersHandler);
+app.post("/admin/users", requirePermission("manage_users"), createAdminUserHandler);
+app.patch("/admin/users/:id/role", requirePermission("manage_users"), updateAdminUserRoleHandler);
+app.delete("/admin/users/:id", requirePermission("manage_users"), deactivateAdminUserHandler);
+
+// ── API keys ──────────────────────────────────────────────────────────────────
+app.get("/admin/api-keys", requirePermission("view_api_keys"), listApiKeysHandler);
+app.post("/admin/api-keys", requirePermission("manage_api_keys"), upsertApiKeyHandler);
+app.patch("/admin/api-keys/:key/revoke", requirePermission("manage_api_keys"), revokeApiKeyHandler);
+app.patch("/admin/api-keys/:key/chains", requirePermission("manage_api_keys"), updateApiKeyChainsHandler);
+app.delete("/admin/api-keys/:key", requirePermission("manage_api_keys"), revokeApiKeyHandler);
+
+// ── Tenants & subscription tiers ──────────────────────────────────────────────
+app.get("/admin/subscription-tiers", requirePermission("view_tenants"), listSubscriptionTiersHandler);
 app.patch(
   "/admin/tenants/:tenantId/subscription-tier",
+  requirePermission("manage_tenants"),
   updateTenantSubscriptionTierHandler,
 );
-app.get("/admin/signers", listSignersHandler(config));
-app.post("/admin/signers", addSignerHandler(config));
-app.delete("/admin/signers/:publicKey", removeSignerHandler(config));
+app.delete("/admin/tenants/:tenantId", (req: Request, res: Response, next: NextFunction) => {
+  void deleteTenantByAdminHandler(req, res, next);
+});
+
+// ── Signers ───────────────────────────────────────────────────────────────────
+app.get("/admin/signers", requirePermission("view_signers"), listSignersHandler(config));
+app.post("/admin/signers", requirePermission("manage_signers"), addSignerHandler(config));
+app.delete("/admin/signers/:publicKey", requirePermission("manage_signers"), removeSignerHandler(config));
+
+// ── Transactions & analytics ──────────────────────────────────────────────────
 app.get("/admin/prices", getPriceHandler);
-app.get("/admin/transactions", listTransactionsHandler);
-app.get("/admin/analytics/spend-forecast", getSpendForecastHandler(config));
-app.get("/admin/fee-multiplier", getFeeMultiplierHandler);
-app.get("/admin/device-tokens", listDeviceTokensHandler);
-app.post("/admin/device-tokens", registerDeviceTokenHandler);
-app.delete("/admin/device-tokens/:id", deleteDeviceTokenHandler);
-app.get("/admin/webhooks/dlq", listDlqHandler);
-app.post("/admin/webhooks/dlq/replay", replayDlqHandler);
-app.post("/admin/webhooks/dlq/delete", deleteDlqHandler);
+app.get("/admin/transactions", requirePermission("view_transactions"), listTransactionsHandler);
+app.get("/admin/analytics/spend-forecast", requirePermission("view_analytics"), getSpendForecastHandler(config));
+app.get("/admin/fee-multiplier", requirePermission("manage_config"), getFeeMultiplierHandler);
+app.get("/admin/multi-chain/stats", requirePermission("view_analytics"), getMultiChainStatsHandler(config));
+app.get("/admin/device-tokens", requirePermission("view_api_keys"), listDeviceTokensHandler);
+app.post("/admin/device-tokens", requirePermission("manage_api_keys"), registerDeviceTokenHandler);
+app.delete("/admin/device-tokens/:id", requirePermission("manage_api_keys"), deleteDeviceTokenHandler);
+app.get("/admin/webhooks/dlq", requirePermission("view_transactions"), listDlqHandler);
+app.post("/admin/webhooks/dlq/replay", requirePermission("manage_config"), replayDlqHandler);
+app.post("/admin/webhooks/dlq/delete", requirePermission("manage_config"), deleteDlqHandler);
+app.get("/admin/audit-log/export", requirePermission("view_audit_logs"), exportAuditLogHandler);
+
+// Bridge settlement admin routes
+app.get("/admin/bridge-settlements", listBridgeSettlementsHandler);
+app.patch("/admin/bridge-settlements/:id/resolve", resolveBridgeSettlementHandler);
+app.post("/admin/bridge-settlements/:id/refund", refundBridgeSettlementHandler);
 
 // Notification centre routes (SSE must be registered before /:id/read)
 app.get("/admin/notifications/sse", (req: Request, res: Response) =>
@@ -388,7 +484,8 @@ app.patch("/admin/notifications/:id/read", (req: Request, res: Response) => {
   void markReadHandler(req, res);
 });
 
-app.post("/stripe/webhook",
+app.post(
+  "/stripe/webhook",
   express.raw({ type: "application/json" }),
   stripeWebhookHandler,
 );
@@ -400,6 +497,165 @@ app.get("/admin/digest/unsubscribe", digestUnsubscribeHandler);
 app.post("/admin/digest/unsubscribe", digestUnsubscribeHandler);
 app.post("/admin/digest/send-now", sendDigestNowHandler);
 
+// Audit logs
+app.get("/admin/audit-logs", (req: Request, res: Response) => {
+  void listAuditLogsHandler(req, res);
+});
+
+// Intelligent rate limiting admin routes
+app.get("/admin/rate-limit/candidates", (req: Request, res: Response) => {
+  void (async () => {
+    const { getUpgradeCandidatesHandler } = await import(
+      "./handlers/adminRateLimit"
+    );
+    getUpgradeCandidatesHandler(req, res);
+  })();
+});
+app.post("/admin/rate-limit/adjust", (req: Request, res: Response) => {
+  void (async () => {
+    const { adminTierAdjustmentHandler } = await import(
+      "./handlers/adminRateLimit"
+    );
+    adminTierAdjustmentHandler(req, res);
+  })();
+});
+app.get("/admin/rate-limit/usage/:tenantId", (req: Request, res: Response) => {
+  void (async () => {
+    const { getTenantUsageHandler } = await import("./handlers/adminRateLimit");
+    getTenantUsageHandler(req, res);
+  })();
+});
+app.get("/admin/rate-limit/adjustments", (req: Request, res: Response) => {
+  void (async () => {
+    const { getTierAdjustmentsHandler } = await import(
+      "./handlers/adminRateLimit"
+    );
+    getTierAdjustmentsHandler(req, res);
+  })();
+});
+app.post("/admin/rate-limit/manual-score", (req: Request, res: Response) => {
+  void (async () => {
+    const { triggerManualScoringHandler } = await import(
+      "./handlers/adminRateLimit"
+    );
+    triggerManualScoringHandler(req, res);
+  })();
+});
+
+// Chain registry — supported network management (Phase 11)
+app.get("/admin/chains", (req: Request, res: Response) => {
+  void listChainsHandler(req, res);
+});
+app.post("/admin/chains", (req: Request, res: Response) => {
+  void createChainHandler(req, res);
+});
+app.patch("/admin/chains/:id", (req: Request, res: Response) => {
+  void updateChainHandler(req, res);
+});
+app.delete("/admin/chains/:id", (req: Request, res: Response) => {
+  void deleteChainHandler(req, res);
+});
+
+// Cross-chain state sync management (Phase 11)
+app.get(
+  "/admin/cross-chain-sync/history",
+  async (req: Request, res: Response) => {
+    try {
+      const history = await prisma.crossChainSync.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 50,
+      });
+      res.json({ history });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch sync history" });
+    }
+  },
+);
+
+app.get(
+  "/admin/cross-chain-sync/status",
+  async (req: Request, res: Response) => {
+    try {
+      // In a real implementation, we would query the contracts here.
+      // For the PoC, we'll return mock data or the last known state from the DB.
+      const lastSync = await prisma.crossChainSync.findFirst({
+        orderBy: { updatedAt: "desc" },
+      });
+
+      // Default or mock values if no sync has happened yet
+      let stellarCount = 0;
+      let evmCount = 0;
+
+      if (lastSync) {
+        const payload = JSON.parse(lastSync.payload);
+        const count = Number(payload.count);
+        stellarCount = count;
+        evmCount = count;
+      }
+
+      res.json({
+        stellarCount,
+        evmCount,
+        lastSyncAt: lastSync?.updatedAt || null,
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch sync status" });
+    }
+  },
+);
+
+app.post(
+  "/admin/cross-chain-sync/increment-stellar",
+  async (req: Request, res: Response) => {
+    try {
+      logger.info("Manual Soroban increment triggered from admin");
+      // This would call the Soroban contract. For PoC, we simulate the success.
+      res.json({
+        ok: true,
+        message: "Soroban increment initiated",
+        txHash:
+          "MOCK_STELLAR_" + Math.random().toString(36).slice(2).toUpperCase(),
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to initiate Soroban increment" });
+    }
+  },
+);
+
+app.post(
+  "/admin/cross-chain-sync/increment-evm",
+  async (req: Request, res: Response) => {
+    try {
+      logger.info("Manual EVM increment triggered from admin");
+      // This would call the EVM contract. For PoC, we simulate the success.
+      res.json({
+        ok: true,
+        message: "EVM increment initiated",
+        txHash: "0x" + Math.random().toString(16).slice(2).padStart(64, "0"),
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to initiate EVM increment" });
+    }
+  },
+);
+
+// SAR (Suspicious Activity Report) routes — Phase 12: Compliance
+app.get("/admin/sar/stats", (req: Request, res: Response) => {
+  void getSARStatsHandler(req, res);
+});
+app.get("/admin/sar/export", (req: Request, res: Response) => {
+  void exportSARReportsHandler(req, res);
+});
+app.get("/admin/sar", (req: Request, res: Response) => {
+  void listSARReportsHandler(req, res);
+});
+app.get("/admin/sar/:id", (req: Request, res: Response) => {
+  void getSARReportHandler(req, res);
+});
+app.patch("/admin/sar/:id/review", (req: Request, res: Response) => {
+  void reviewSARReportHandler(req, res);
+});
+
 app.use(notFoundHandler);
 app.use(createGlobalErrorHandler(slackNotifier));
 
@@ -409,6 +665,8 @@ let ledgerMonitor: ReturnType<typeof initializeLedgerMonitor> | null = null;
 let balanceMonitor: ReturnType<typeof initializeBalanceMonitor> | null = null;
 let incidentMonitor: ReturnType<typeof initializeIncidentMonitor> | null = null;
 let digestWorker: ReturnType<typeof initializeDigestWorker> | null = null;
+let tenantErasureWorker: ReturnType<typeof initializeTenantErasureWorker> | null = null;
+let bridgeMonitor: ReturnType<typeof initializeBridgeMonitor> | null = null;
 let shuttingDown = false;
 let server: ReturnType<typeof app.listen> | null = null;
 
@@ -428,7 +686,12 @@ async function shutdown(signal: string): Promise<void> {
   balanceMonitor?.stop();
   incidentMonitor?.stop();
   digestWorker?.stop();
+  tenantErasureWorker?.stop();
   feeManager.stop();
+  stopChainRegistryHotReload();
+  stopOFACScreening();
+  crossChainSyncService.stop();
+  bridgeMonitor?.stop();
 
   if (server) {
     server.close(() => process.exit(0));
@@ -531,7 +794,75 @@ try {
     logger.info("Daily digest worker started");
   }
 } catch (error) {
-  logger.error({ ...serializeError(error) }, "Failed to start daily digest worker");
+  logger.error(
+    { ...serializeError(error) },
+    "Failed to start daily digest worker",
+  );
+}
+
+try {
+  tenantErasureWorker = initializeTenantErasureWorker();
+  tenantErasureWorker.start();
+  logger.info("Tenant erasure worker started");
+} catch (error) {
+  logger.error(
+    { ...serializeError(error) },
+    "Failed to start tenant erasure worker",
+  );
+}
+
+// Audit log AI summary worker
+try {
+  startAuditSummaryWorker();
+  logger.info("Audit summary worker started");
+} catch (error) {
+  logger.error(
+    { ...serializeError(error) },
+    "Failed to start audit summary worker",
+  );
+}
+
+// Daily scoring worker for intelligent rate limiting
+try {
+  dailyScoringWorker.start();
+  logger.info("Daily scoring worker started");
+} catch (error) {
+  logger.error(
+    { ...serializeError(error) },
+    "Failed to start daily scoring worker",
+  );
+}
+
+// Chain registry hot-reload (reads enabled chains from DB on interval)
+try {
+  startChainRegistryHotReload();
+} catch (error) {
+  logger.error(
+    { ...serializeError(error) },
+    "Failed to start chain registry hot-reload",
+  );
+}
+
+// Cross-chain state sync PoC (Phase 11)
+try {
+  crossChainSyncService.start();
+} catch (error) {
+  logger.error(
+    { ...serializeError(error) },
+    "Failed to start cross-chain sync service",
+  );
+}
+
+// Bridge monitor (Phase 11: Multi-Chain)
+try {
+  bridgeMonitor = initializeBridgeMonitor(config, alertService);
+  bridgeMonitor.start();
+  logger.info("Bridge monitor worker started");
+} catch (error) {
+  logger.error(
+    { ...serializeError(error) },
+    "Failed to start bridge monitor",
+  );
 }
 
 server = app.listen(PORT, () => {

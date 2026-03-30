@@ -1,12 +1,17 @@
 import { Request, Response } from "express";
 import {
   ApiKeyConfig,
+  VALID_CHAINS,
+  type Chain,
   upsertApiKey,
   deleteApiKey,
   listApiKeys,
+  invalidateCachedApiKey,
 } from "../middleware/apiKeys";
 import { invalidateApiKeyCache } from "../utils/redis";
 import prisma from "../utils/db";
+import { getAuditActor, logAuditEvent } from "../services/auditLogger";
+import { requireAdminToken } from "../utils/adminAuth";
 
 // Typed accessor for the prisma apiKey model since db.ts uses a loose type
 const apiKeyModel = (prisma as any).apiKey as {
@@ -14,16 +19,6 @@ const apiKeyModel = (prisma as any).apiKey as {
   findUnique: (args: any) => Promise<any | null>;
   update: (args: any) => Promise<any>;
 };
-
-function requireAdminToken(req: Request, res: Response): boolean {
-  const token = req.header("x-admin-token");
-  const expected = process.env.FLUID_ADMIN_TOKEN;
-  if (!expected || token !== expected) {
-    res.status(401).json({ error: "Unauthorized" });
-    return false;
-  }
-  return true;
-}
 
 // Note: These admin endpoints are intentionally minimal — secure them in production.
 
@@ -39,6 +34,7 @@ export async function listApiKeysHandler(req: Request, res: Response) {
         prefix: true,
         tenantId: true,
         active: true,
+        allowedChains: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -50,6 +46,7 @@ export async function listApiKeysHandler(req: Request, res: Response) {
       prefix: k.prefix,
       tenantId: k.tenantId,
       active: k.active,
+      allowedChains: (k.allowedChains ?? "stellar").split(",").map((s: string) => s.trim()),
       createdAt: k.createdAt.toISOString(),
       updatedAt: k.updatedAt.toISOString(),
     }));
@@ -80,12 +77,67 @@ export async function upsertApiKeyHandler(req: Request, res: Response) {
   }
 
   try {
+    if (!requireAdminToken(req, res)) return;
+
     upsertApiKey(payload);
+    void logAuditEvent("API_KEY_UPSERT", getAuditActor(req), {
+      key: payload.key,
+      tenantId: payload.tenantId,
+      active: payload.active ?? true,
+    });
+
     res
       .status(200)
       .json({ message: "API key upserted and cached", key: payload.key });
   } catch (err) {
     res.status(500).json({ error: "Failed to upsert API key" });
+  }
+}
+
+export async function updateApiKeyChainsHandler(req: Request, res: Response) {
+  if (!requireAdminToken(req, res)) return;
+
+  const { key } = req.params;
+  if (!key) {
+    res.status(400).json({ error: "Key param required" });
+    return;
+  }
+
+  const { allowedChains } = req.body as { allowedChains?: string[] };
+  if (!Array.isArray(allowedChains) || allowedChains.length === 0) {
+    res.status(400).json({ error: "allowedChains must be a non-empty array" });
+    return;
+  }
+
+  const valid = allowedChains.every((c) =>
+    (VALID_CHAINS as readonly string[]).includes(c),
+  );
+  if (!valid) {
+    res.status(400).json({
+      error: `Invalid chain(s). Allowed: ${VALID_CHAINS.join(", ")}`,
+    });
+    return;
+  }
+
+  try {
+    const record = await apiKeyModel.update({
+      where: { id: key },
+      data: { allowedChains: allowedChains.join(",") },
+    });
+
+    // Invalidate cached key so middleware picks up new chains
+    await invalidateCachedApiKey(record.key).catch(() => {});
+
+    res.json({
+      message: "Allowed chains updated",
+      allowedChains,
+    });
+  } catch (err: any) {
+    if (err?.code === "P2025") {
+      res.status(404).json({ error: "API key not found" });
+      return;
+    }
+    res.status(500).json({ error: "Failed to update allowed chains" });
   }
 }
 
@@ -110,6 +162,11 @@ export async function revokeApiKeyHandler(req: Request, res: Response) {
     if (record) {
       deleteApiKey(record.key);
       await invalidateApiKeyCache(record.key);
+      void logAuditEvent("API_KEY_REVOKE", getAuditActor(req), {
+        id: key,
+        prefix: record.prefix,
+        tenantId: record.tenantId,
+      });
     }
 
     res.status(200).json({ message: `API key ${key} revoked` });
