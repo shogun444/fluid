@@ -29,6 +29,9 @@ model Tenant {
   subscriptionTier   SubscriptionTier  @relation(fields: [subscriptionTierId], references: [id])
   dailyQuotaStroops  BigInt            @default(1000000) // 0.1 XLM default
   totalCredit        BigInt            @default(0) // Total purchased credit
+  tosAcceptedAt      DateTime?
+  tosAcceptedIp      String?
+  tosVersion         String?
   webhookUrl         String?
   webhookSecret      String?
   webhookEventTypes  String?
@@ -183,6 +186,9 @@ model PendingRegistration {
   intendedUse   String
   token         String   @unique
   tokenExpiresAt DateTime
+  tosAcceptedAt DateTime?
+  tosAcceptedIp String?
+  tosVersion    String?
   // pending → verified (token consumed) or expired (TTL elapsed)
   status        String   @default("pending")
   createdAt     DateTime @default(now())
@@ -190,6 +196,20 @@ model PendingRegistration {
 
   @@index([token])
   @@index([status])
+}
+
+model TermsAcceptanceAudit {
+  id          String   @id @default(uuid())
+  email       String
+  projectName String
+  tosVersion  String
+  acceptedAt  DateTime @default(now())
+  acceptedIp  String
+  createdAt   DateTime @default(now())
+
+  @@index([email])
+  @@index([tosVersion])
+  @@index([acceptedAt])
 }
 
 model Transaction {
